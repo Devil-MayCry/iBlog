@@ -3,29 +3,29 @@
   xmlns:xhtml="http://www.w3.org/1999/xhtml">
   
   <url>
-    <loc>http://example.org/blog/readme/</loc>
+    <loc>https://devil-maycry.github.io/blog/readme/</loc>
     <lastmod>2018-08-22T00:00:00+00:00</lastmod>
   </url>
   
   <url>
-    <loc>http://example.org/blog/</loc>
-    <lastmod>2018-08-22T00:00:00+00:00</lastmod>
-    <priority>0</priority>
-  </url>
-  
-  <url>
-    <loc>http://example.org/categories/</loc>
-    <priority>0</priority>
-  </url>
-  
-  <url>
-    <loc>http://example.org/</loc>
+    <loc>https://devil-maycry.github.io/blog/</loc>
     <lastmod>2018-08-22T00:00:00+00:00</lastmod>
     <priority>0</priority>
   </url>
   
   <url>
-    <loc>http://example.org/tags/</loc>
+    <loc>https://devil-maycry.github.io/categories/</loc>
+    <priority>0</priority>
+  </url>
+  
+  <url>
+    <loc>https://devil-maycry.github.io/</loc>
+    <lastmod>2018-08-22T00:00:00+00:00</lastmod>
+    <priority>0</priority>
+  </url>
+  
+  <url>
+    <loc>https://devil-maycry.github.io/tags/</loc>
     <priority>0</priority>
   </url>
   
