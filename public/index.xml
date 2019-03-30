@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes" ?>
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
 	<channel>
-		<title>My New Hugo Site </title>
+		<title> </title>
 		<link>https://devil-maycry.github.io/</link>
 		<generator>Hugo -- gohugo.io</generator>
 		<language>en-us</language>
@@ -11,12 +11,12 @@
 		
 		<item>
 			<title>《黑天鹅读书笔记》</title>
-			<link>https://devil-maycry.github.io/blog/readme/</link>
+			<link>https://devil-maycry.github.io/blog/blackswan/</link>
 			<pubDate>Wed, 22 Aug 2018 00:00:00 UTC</pubDate>
 			<author></author>
-			<guid>https://devil-maycry.github.io/blog/readme/</guid>
-			<media:content xmlns:media="http://search.yahoo.com/mrss/" url="https://devil-maycry.github.io/img/1-logo.png" medium="image" type="image/jpg" width="100" height="100" />
-			<description>&lt;p&gt;《黑天鹅》告诉我们: 世界是极端的.&lt;/p&gt;
+			<guid>https://devil-maycry.github.io/blog/blackswan/</guid>
+			<media:content xmlns:media="http://search.yahoo.com/mrss/" url="https://devil-maycry.github.io/img/blackswan.jpeg" medium="image" type="image/jpg" width="100" height="100" />
+			<description>&lt;p&gt;《黑天鹅》试图告诉我们: 世界是极端的.&lt;/p&gt;
 
 &lt;h2 id=&#34;序言&#34;&gt;序言&lt;/h2&gt;
 
@@ -58,7 +58,9 @@
 
 &lt;ul&gt;
 &lt;li&gt;负面例子比正面例子更能接近真想。我们知道什么观点一定是错的，但不一定知道什么观点是正确的&lt;/li&gt;
-&lt;/ul&gt;</description>
+&lt;/ul&gt;
+
+&lt;p&gt;(未完待续)&lt;/p&gt;</description>
 		</item>
 		
 	</channel>
