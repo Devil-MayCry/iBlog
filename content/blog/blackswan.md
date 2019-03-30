@@ -1,5 +1,5 @@
 ---
-title: 《黑天鹅读书笔记》
+title: 《黑天鹅》
 date: "2018-08-22"
 description: ""
 image: "../img/blackswan.jpeg"
