@@ -6,11 +6,125 @@
 		<generator>Hugo -- gohugo.io</generator>
 		<language>en-us</language>
 		<author></author>
-		<rights>Copyright (c) 2018</rights>
-		<updated>2018-08-22 00:00:00 &#43;0000 UTC</updated>
+		<rights>Copyright (c) 2019</rights>
+		<updated>2019-03-30 00:00:00 &#43;0000 UTC</updated>
 		
 		<item>
-			<title>《黑天鹅读书笔记》</title>
+			<title>网易公开课《博弈论》笔记</title>
+			<link>https://devil-maycry.github.io/blog/gametheroy/</link>
+			<pubDate>Sat, 30 Mar 2019 00:00:00 UTC</pubDate>
+			<author></author>
+			<guid>https://devil-maycry.github.io/blog/gametheroy/</guid>
+			<media:content xmlns:media="http://search.yahoo.com/mrss/" url="https://devil-maycry.github.io/img/gametheroy.jpg" medium="image" type="image/jpg" width="100" height="100" />
+			<description>&lt;p&gt;网易公开课《博弈论》（耶鲁）的一些笔记记录.&lt;/p&gt;
+
+&lt;h2 id=&#34;第一讲&#34;&gt;第一讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;不要选择劣势策略&lt;/li&gt;
+&lt;li&gt;理性选择可能导致次优的结果&lt;/li&gt;
+&lt;li&gt;学会换位思考&lt;/li&gt;
+&lt;li&gt;当你想得到某件东西之前，先了解这样东西&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第二讲&#34;&gt;第二讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;弱优势策略&lt;/li&gt;
+&lt;li&gt;迭代淘汰理论&lt;/li&gt;
+&lt;li&gt;一个策略可能目前不是劣势策略，但当我们淘汰掉目前劣势策略后，它有可能变成新的劣势策略&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第三讲&#34;&gt;第三讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;中位选民理论&lt;/li&gt;
+&lt;li&gt;没有优势策略的情况下，对手选择的概率能计算出我们做出什么选择收益较大（线性方程）&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第四讲&#34;&gt;第四讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;最佳对策：我的选择 Si是对手选择Si‘的最佳对策，当且仅当参与人i在对手的策略S-i选择Si时收益弱优于其他策略Si’&lt;/li&gt;
+&lt;li&gt;也可以定义为: Si是当对手选择Si‘时，能让我收益最大化的决策&lt;/li&gt;
+&lt;li&gt;当我和对手互相不断地，迭代地抛弃劣势策略时，最后会在纳什平衡点得到平衡&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第五讲&#34;&gt;第五讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;纳什均衡：策略组合是一个集合，该集合包含每一个参与人的一个已选策略（s1*,s2*&amp;hellip;sm*）.对于任意一个人的策略选择si*，是其他参与人所选策略（s*-i）的最佳对策&lt;/li&gt;
+&lt;li&gt;如果其他任何人都不改变策略，自己改变策略没有好处&lt;/li&gt;
+&lt;li&gt;“不后悔”：只有参与了纳什均衡才不后悔&lt;/li&gt;
+&lt;li&gt;自然选择会逐渐倾向于纳什均衡，并且不一定是优势的纳什均衡&lt;/li&gt;
+&lt;li&gt;自然趋向有时候取决于初始状态&lt;/li&gt;
+&lt;li&gt;纳什均衡能通过沟通，而并不需要合同就可以改善结果。囚徒却需要合同&lt;/li&gt;
+&lt;li&gt;协同谬误造成银行挤兑&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第六讲&#34;&gt;第六讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;领导力能促进纳什均衡&lt;/li&gt;
+&lt;li&gt;古诺双寡头模型：策略替代博弈，你越多，我就会选择越少&lt;/li&gt;
+&lt;li&gt;当一方垄断时吗，整个市场利润最大&lt;/li&gt;
+&lt;li&gt;双寡头在竞争中, 达到纳什平衡是最佳的选择，就是古诺产量&lt;/li&gt;
+&lt;li&gt;如果签署协议强制产量，达到利润最大，这时会有其他公司乘机而入&lt;/li&gt;
+&lt;li&gt;完全竞争是产量最大，古诺模型次之，垄断产量最少。价格正好相反&lt;/li&gt;
+&lt;li&gt;完全竞争产量： 需求曲线和边际成本的交点（不挣钱）&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第七讲&#34;&gt;第七讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;伯川德模型的纳什均衡是双方都把价格定到边际成本，也就是双方都不挣钱&lt;/li&gt;
+&lt;li&gt;选举模型&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第八讲&#34;&gt;第八讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;选举模型：当双方出于纳什平衡时，第三方的加入会打破。&lt;/li&gt;
+&lt;li&gt;如果选举双方的立场太偏向极端，会给第三方的选举人带来机会并获胜&lt;/li&gt;
+&lt;li&gt;种族隔离：是一种稳定，严格的纳什均衡。非稳定均衡可能因为少数人的选择，就偏向崩塌&lt;/li&gt;
+&lt;li&gt;随机化有时候能解决选择隔离的问题。纯随机化的策略也叫混合策略&lt;/li&gt;
+&lt;li&gt;混合策略是剪刀石头布的纳什均衡，并且是唯一的&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第九讲&#34;&gt;第九讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;混合策略纳什均衡：一个混合策略组合如果是一个纳什均衡（也就是最优混合策略），那其中每一个纯策略都是最佳策略&lt;/li&gt;
+&lt;li&gt;混合策略中，间接影响（战略影响）往往比直接影响大&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第十讲&#34;&gt;第十讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;混合棒球策略&lt;/li&gt;
+&lt;li&gt;约会策略&lt;/li&gt;
+&lt;li&gt;报税策略: 提高逃税惩罚，由于没有改变审计员的混合策略收益，并不会改变纳税人的均衡（提高纳税率），而且会降低审计率。根据理论，富人（逃税收益高的）非但不会逃税，而且更容易受审查&lt;/li&gt;
+&lt;li&gt;混合策略中，均衡有三种：1真正的随机 （棒球） 2. 人们的信念（约会） 3. 社会当中某种人的比例（纳税）&lt;/li&gt;
+&lt;li&gt;检验均衡：寻找是否有向纯策略的改变，没有就已均衡&lt;/li&gt;
+&lt;li&gt;AB两方混合博弈中，改变A的收益，就会导致B的混合均衡改变&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第十一讲&#34;&gt;第十一讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;不会被突变占领的遗传（或者不会被淘汰的突变）叫做进化稳定策略&lt;/li&gt;
+&lt;li&gt;根据博弈论，进化（无性繁殖）并不一定有利的，不好的进化可能会占领种群&lt;/li&gt;
+&lt;li&gt;如果策略（S, S）不是纳什均衡，那么S就不是进化稳定策略&lt;/li&gt;
+&lt;li&gt;纳什均衡并不一定是进化稳定策略。但如果是严格纳什均衡，那么就是进化稳定策略&lt;/li&gt;
+&lt;li&gt;进化稳定性：（定义见书，不好写）&lt;/li&gt;
+&lt;li&gt;突变如果面对正常收益很低，或者同类收益很低，都会导致灭绝&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;(未完待续)&lt;/p&gt;</description>
+		</item>
+		
+		<item>
+			<title>《黑天鹅》</title>
 			<link>https://devil-maycry.github.io/blog/blackswan/</link>
 			<pubDate>Wed, 22 Aug 2018 00:00:00 UTC</pubDate>
 			<author></author>
