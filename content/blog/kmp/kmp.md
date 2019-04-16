@@ -45,13 +45,13 @@ int KMP(char * t, char * p)
 		}
 	 	else 
            		j = next[j];
-    	}
+  }
  
     if (j == strlen(p))
        return i - j;
     else 
        return -1;
-
+}
 ```
 
 好了，讲到这里，其实KMP算法的主体就已经讲解完了。你会发现，其实KMP算法的动机是很简单的，解决的方案也很简单。远没有很多教材和算法书里所讲的那么乱七八糟，只要搞明白了PMT的意义，其实整个算法都迎刃而解。
@@ -98,7 +98,7 @@ void getNext(char * p, int * next)
 		else
 			j = next[j];
 	}
-
+}
 ```
 
 &nbsp;
