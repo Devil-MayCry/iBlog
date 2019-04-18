@@ -2,10 +2,12 @@
 title: 《黑天鹅》
 date: "2018-08-22"
 description: ""
-image: "../img/blackswan.jpeg"
+url: /blog/black_swan/
+image: "/blog/black_swan/black_swan.jpeg"
 ---
 《黑天鹅》试图告诉我们: 世界是极端的.
 <!--more-->
+
 ## 序言
 
 * 能预测的事往往无足轻重，黑天鹅才是推动世界发展的力量
@@ -40,8 +42,5 @@ image: "../img/blackswan.jpeg"
 
 * 负面例子比正面例子更能接近真想。我们知道什么观点一定是错的，但不一定知道什么观点是正确的
 
-
 (未完待续)
-
-
 

@@ -2,7 +2,8 @@
 title: 网易公开课《博弈论》笔记
 date: "2019-03-30"
 description: "之前观看网易公开课《博弈论》（耶鲁）的一些笔记记录"
-image: "../img/gametheroy.jpg"
+url: /blog/game_theory/
+image: "/blog/game_theory/game_theory.jpg"
 ---
  网易公开课《博弈论》（耶鲁）的一些笔记记录.
 <!--more-->
@@ -87,5 +88,5 @@ image: "../img/gametheroy.jpg"
 * 进化稳定性：（定义见书，不好写）
 * 突变如果面对正常收益很低，或者同类收益很低，都会导致灭绝
 
-(未完待续)
+
 
