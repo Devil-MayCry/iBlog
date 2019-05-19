@@ -183,8 +183,10 @@ func watch(ctx context.Context) {
 > 注意</br>* 你使用的键值必须满足Go语言的可比性概念，也就是运算符 == 和 != 在使用时需要返回正确的结果</br>* 返回值必须安全，才能从多个goroutine访问</br></br>由于context的键和值都被定义为interface{},所以当试图检索值时，我们会失去Go语言的类型安全性
 
 Go语言作者建议你在从Context中存储和检索值时遵循一些规则
+
 * 自定义键类型。防止其他软件包冲突
 * 仅将上下文值用于传输进程和请求的请求范围数据，API边界，而不是将可选参数传递给函数
+  
 ## 源码分析
 ### WithCancel
 context.WithCancel生成了一个withCancel的实例以及一个cancelFuc，这个函数就是用来关闭ctxWithCancel中的 Done channel 函数。
