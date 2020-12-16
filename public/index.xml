@@ -2,20 +2,1844 @@
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
 	<channel>
 		<title> </title>
-		<link>https://devil-maycry.github.io/</link>
+		<link>https://blog.ni2x.com/</link>
 		<generator>Hugo -- gohugo.io</generator>
 		<language>en-us</language>
 		<author></author>
 		<rights>Copyright (c) 2019</rights>
-		<updated>2019-03-30 00:00:00 &#43;0000 UTC</updated>
+		<updated>2019-05-16 00:00:00 &#43;0000 UTC</updated>
+		
+		<item>
+			<title>Go语言context包学习笔记</title>
+			<link>https://blog.ni2x.com/blog/go/context/</link>
+			<pubDate>Thu, 16 May 2019 00:00:00 UTC</pubDate>
+			<author></author>
+			<guid>https://blog.ni2x.com/blog/go/context/</guid>
+			<media:content xmlns:media="http://search.yahoo.com/mrss/" url="https://blog.ni2x.com/blog/go/context.png" medium="image" type="image/jpg" width="100" height="100" />
+			<description>&lt;p&gt;Go语言中的context是一个很常用的包，但想用好，也需要深入学习一下&lt;/p&gt;
+
+&lt;h2 id=&#34;适用场景&#34;&gt;适用场景&lt;/h2&gt;
+
+&lt;p&gt;处理单个请求的多个goroutine之间与请求域的数据、取消信号、截止时间等相关操作。
+&amp;gt; 例如：在Go服务器程序中，每个请求都会有一个goroutine去处理。然而，处理程序往往还需要创建额外的goroutine去访问后端资源，比如数据库、RPC服务等。由于这些goroutine都是在处理同一个请求，所以它们往往需要访问一些共享的资源，比如用户身份信息、认证token、请求截止时间等。而且如果请求超时或者被取消后，所有的goroutine都应该马上退出并且释放相关的资源。这种情况就需要用Context来为我们取消掉所有goroutine&lt;/p&gt;
+
+&lt;p&gt;P.S
+如果只是为了处理并发程序中的，由于超时，取消或者其他部分的故障需要的抢占操作，通过done channel的方式似乎也可以完成，让该channel 在程序中流动并取消所有阻塞的并发操作。context可以看作它的加强版，附加额外传递的信息：为什么取消，或者是否需要最后的完成期限（超时）&lt;/p&gt;
+
+&lt;h2 id=&#34;原理&#34;&gt;原理&lt;/h2&gt;
+
+&lt;h3 id=&#34;结构&#34;&gt;结构&lt;/h3&gt;
+
+&lt;p&gt;Context是一个interface，在golang里面，interface是一个使用非常广泛的结构，它可以接纳任何类型。Context定义很简单，一共4个方法，我们需要能够很好的理解这几个方法&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-go&#34;&gt;type Context interface {
+  // Deadline方法是获取设置的截止时间的意思，第一个返回式是截止时间，到了这个时间点，Context会自动发起取消请求；第二个返回值ok==false时表示没有设置截止时间，如果需要取消的话，需要调用取消函数进行取消。
+	Deadline() (deadline time.Time, ok bool)
+  // Done方法返回一个只读的chan，类型为struct{}，我们在goroutine中，如果该方法返回的chan可以读取，则意味着parent context已经发起了取消请求，我们通过Done方法收到这个信号后，就应该做清理操作，然后退出goroutine，释放资源。之后，Err 方法会返回一个错误，告知为什么 Context 被取消。
+	Done() &amp;lt;-chan struct{}
+  // Err方法返回取消的错误原因，因为什么Context被取消。
+	Err() error
+  // Value方法获取该Context上绑定的值，是一个键值对，所以要通过一个Key才可以获取对应的值，这个值一般是线程安全的。
+	Value(key interface{}) interface{}
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;h3 id=&#34;使用方式&#34;&gt;使用方式&lt;/h3&gt;
+
+&lt;h4 id=&#34;直接使用&#34;&gt;直接使用&lt;/h4&gt;
+
+&lt;p&gt;Context 虽然是个接口，但是并不需要使用方实现，golang内置的context 包，已经帮我们实现了2个方法，一般在代码中，开始上下文的时候都是以这两个作为最顶层的parent context，然后再衍生出子context。这些 Context 对象形成一棵树：当一个 Context 对象被取消时，继承自它的所有 Context 都会被取消。两个实现如下：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-go&#34;&gt;var (
+	background = new(emptyCtx)
+	todo = new(emptyCtx)
+)
+
+func Background() Context {
+	return background
+
+}
+
+func TODO() Context {
+	return todo
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;一个是Background，主要用于main函数、初始化以及测试代码中，作为Context这个树结构的最顶层的Context，也就是根Context，它不能被取消。
+一个是TODO，如果我们不知道该使用什么Context的时候，可以使用这个。
+他们两个本质上都是emptyCtx结构体类型，是一个不可取消，没有设置截止时间，没有携带任何值的Context。&lt;/p&gt;
+
+&lt;h4 id=&#34;context继承&#34;&gt;context继承&lt;/h4&gt;
+
+&lt;p&gt;有了如上的根Context，那么是如何衍生更多的子Context的呢？这就要靠context包为我们提供的With系列的函数了。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-go&#34;&gt;// WithCancel函数，传递一个父Context作为参数，返回子Context，以及一个取消函数用来取消Context
+func WithCancel(parent Context) (ctx Context, cancel CancelFunc)
+
+// WithDeadline函数，和WithCancel差不多，它会多传递一个截止时间参数，意味着到了这个时间点，会自动取消Context，当然我们也可以不等到这个时候，可以提前通过取消函数进行取消
+func WithDeadline(parent Context, deadline time.Time) (Context, CancelFunc)
+
+// WithTimeout和WithDeadline基本上一样，这个表示是超时自动取消，是多少时间后自动取消Context的意思
+func WithTimeout(parent Context, timeout time.Duration) (Context, CancelFunc)
+
+// WithValue函数和取消Context无关，它是为了生成一个绑定了一个键值对数据的Context，这个绑定的数据可以通过Context.Value方法访问到，这是我们实际用经常要用到的技巧，一般我们想要通过上下文来传递数据时，可以通过这个方法，如我们需要tarce追踪系统调用栈的时候
+func WithValue(parent Context, key, val interface{}) Context
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;通过上面的结构和方法我们能明白，context主要有两个目的：
+* 提供一个可以取消你的调用图中分支的API
+* 提供用于通过呼叫传输请求范围数据的数据包&lt;/p&gt;
+
+&lt;p&gt;下面我们分别从这两个方面介绍context的各个方法&lt;/p&gt;
+
+&lt;h2 id=&#34;使用方式-1&#34;&gt;使用方式&lt;/h2&gt;
+
+&lt;h3 id=&#34;取消&#34;&gt;取消&lt;/h3&gt;
+
+&lt;p&gt;函数中的取消有三个方面：
+* goroutine的父goroutine可能想要取消它
+* 一个goroutine可能想要取消它的子goroutine
+* goroutine中的任何阻塞操作都必须是可抢占的，以便它可以被取消&lt;/p&gt;
+
+&lt;p&gt;context包帮助管理所有这三个东西&lt;/p&gt;
+
+&lt;blockquote&gt;
+&lt;p&gt;注意：&lt;/br&gt;context类型将是你的函数的第一个参数。如果你看看context接口上的方法，会发现没有任何东西可以改变底层结构的状态，接收context的函数并不能取消它。这避免了调用堆栈上的函数被子函数取消上下文的情况。&lt;/br&gt;这就产生了一个问题：如果context是不可变的，那我们如何影响调用堆栈中当前函数下面的函数的取消 ？&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;这就要提高之前说的三个函数了&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-go&#34;&gt;func WithCancel(parent Context) (ctx Context, cancel CancelFunc)
+
+func WithDeadline(parent Context, deadline time.Time) (Context, CancelFunc)
+
+func WithTimeout(parent Context, timeout time.Duration) (Context, CancelFunc)
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;所有这些函数都接受一个context参数，并返回一个新的context。将新的context传递给子元素。通过这种方式，调用图的连续图层可以创建符合需求的上下文，而不会影响其父母节点。&lt;/p&gt;
+
+&lt;p&gt;例如&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-go&#34;&gt;package main
+
+import (
+	&amp;quot;fmt&amp;quot;
+	&amp;quot;sync&amp;quot;
+	&amp;quot;time&amp;quot;
+
+	&amp;quot;golang.org/x/net/context&amp;quot;
+)
+
+var (
+	wg sync.WaitGroup
+)
+
+func work(ctx context.Context) error {
+	defer wg.Done()
+
+	for i := 0; i &amp;lt; 1000; i++ {
+		select {
+		case &amp;lt;-time.After(2 * time.Second):
+			fmt.Println(&amp;quot;Doing some work &amp;quot;, i)
+
+		// we received the signal of cancelation in this channel
+		case &amp;lt;-ctx.Done():
+			fmt.Println(&amp;quot;Cancel the context &amp;quot;, i)
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+
+	fmt.Println(&amp;quot;Hey, I&#39;m going to do some work&amp;quot;)
+
+	wg.Add(1)
+	go work(ctx)
+	wg.Wait()
+
+	fmt.Println(&amp;quot;Finished. I&#39;m going home&amp;quot;)
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;h3 id=&#34;存储数据&#34;&gt;存储数据&lt;/h3&gt;
+
+&lt;p&gt;context的另一半功能是：用于存储和检索请求范围数据的context的数据包。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-go&#34;&gt;func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	valueCtx := context.WithValue(ctx, key, &amp;quot;add value&amp;quot;)
+
+	go watch(valueCtx)
+	time.Sleep(10 * time.Second)
+	cancel()
+
+	time.Sleep(5 * time.Second)
+}
+
+func watch(ctx context.Context) {
+	for {
+		select {
+		case &amp;lt;-ctx.Done():
+			//get value
+			fmt.Println(ctx.Value(key), &amp;quot;is cancel&amp;quot;)
+
+			return
+		default:
+			//get value
+			fmt.Println(ctx.Value(key), &amp;quot;int goroutine&amp;quot;)
+
+			time.Sleep(2 * time.Second)
+		}
+	}
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;blockquote&gt;
+&lt;p&gt;注意&lt;/br&gt;* 你使用的键值必须满足Go语言的可比性概念，也就是运算符 == 和 != 在使用时需要返回正确的结果&lt;/br&gt;* 返回值必须安全，才能从多个goroutine访问&lt;/br&gt;&lt;/br&gt;由于context的键和值都被定义为interface{},所以当试图检索值时，我们会失去Go语言的类型安全性&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;Go语言作者建议你在从Context中存储和检索值时遵循一些规则&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;自定义键类型。防止其他软件包冲突&lt;/li&gt;
+&lt;li&gt;仅将上下文值用于传输进程和请求的请求范围数据，API边界，而不是将可选参数传递给函数
+&lt;br /&gt;&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;源码分析&#34;&gt;源码分析&lt;/h2&gt;
+
+&lt;h3 id=&#34;withcancel&#34;&gt;WithCancel&lt;/h3&gt;
+
+&lt;p&gt;context.WithCancel生成了一个withCancel的实例以及一个cancelFuc，这个函数就是用来关闭ctxWithCancel中的 Done channel 函数。&lt;/p&gt;
+
+&lt;p&gt;下面来分析下源码实现，首先看看初始化，如下：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-go&#34;&gt;func newCancelCtx(parent Context) cancelCtx {
+	return cancelCtx{
+		Context: parent,
+		done:    make(chan struct{}),
+	}
+}
+
+func WithCancel(parent Context) (ctx Context, cancel CancelFunc) {
+	c := newCancelCtx(parent)
+	propagateCancel(parent, &amp;amp;c)
+	return &amp;amp;c, func() { c.cancel(true, Canceled) }
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;newCancelCtx返回一个初始化的cancelCtx，cancelCtx结构体继承了Context，实现了canceler方法：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-go&#34;&gt;//*cancelCtx 和 *timerCtx 都实现了canceler接口，实现该接口的类型都可以被直接canceled
+type canceler interface {
+    cancel(removeFromParent bool, err error)
+    Done() &amp;lt;-chan struct{}
+}
+
+
+type cancelCtx struct {
+    Context
+    done chan struct{} // closed by the first cancel call.
+    mu       sync.Mutex
+    children map[canceler]bool // set to nil by the first cancel call
+    err      error             // 当其被cancel时将会把err设置为非nil
+}
+
+func (c *cancelCtx) Done() &amp;lt;-chan struct{} {
+    return c.done
+}
+
+func (c *cancelCtx) Err() error {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    return c.err
+}
+
+func (c *cancelCtx) String() string {
+    return fmt.Sprintf(&amp;quot;%v.WithCancel&amp;quot;, c.Context)
+}
+
+//核心是关闭c.done
+//同时会设置c.err = err, c.children = nil
+//依次遍历c.children，每个child分别cancel
+//如果设置了removeFromParent，则将c从其parent的children中删除
+func (c *cancelCtx) cancel(removeFromParent bool, err error) {
+    if err == nil {
+        panic(&amp;quot;context: internal error: missing cancel error&amp;quot;)
+    }
+    c.mu.Lock()
+    if c.err != nil {
+        c.mu.Unlock()
+        return // already canceled
+    }
+    c.err = err
+    close(c.done)
+    for child := range c.children {
+        // NOTE: acquiring the child&#39;s lock while holding parent&#39;s lock.
+        child.cancel(false, err)
+    }
+    c.children = nil
+    c.mu.Unlock()
+
+    if removeFromParent {
+        removeChild(c.Context, c) // 从此处可以看到 cancelCtx的Context项是一个类似于parent的概念
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;可以看到，所有的children都存在一个map中；Done方法会返回其中的done channel， 而另外的cancel方法会关闭Done channel并且逐层向下遍历，关闭children的channel，并且将当前canceler从parent中移除。&lt;/p&gt;
+
+&lt;p&gt;WithCancel初始化一个cancelCtx的同时，还执行了propagateCancel方法，最后返回一个cancel function。&lt;/p&gt;
+
+&lt;p&gt;propagateCancel 方法定义如下：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-go&#34;&gt;// propagateCancel arranges for child to be canceled when parent is.
+func propagateCancel(parent Context, child canceler) {
+	if parent.Done() == nil {
+		return // parent is never canceled
+	}
+	if p, ok := parentCancelCtx(parent); ok {
+		p.mu.Lock()
+		if p.err != nil {
+			// parent has already been canceled
+			child.cancel(false, p.err)
+		} else {
+			if p.children == nil {
+				p.children = make(map[canceler]struct{})
+			}
+			p.children[child] = struct{}{}
+		}
+		p.mu.Unlock()
+	} else {
+		go func() {
+			select {
+			case &amp;lt;-parent.Done():
+				child.cancel(false, parent.Err())
+			case &amp;lt;-child.Done():
+			}
+		}()
+	}
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;propagateCancel 的含义就是传递cancel，从当前传入的parent开始（包括该parent），向上查找最近的一个可以被cancel的parent， 如果找到的parent已经被cancel，则将方才传入的child树给cancel掉，否则，将child节点直接连接为找到的parent的children中（Context字段不变，即向上的父亲指针不变，但是向下的孩子指针变直接了）； 如果没有找到最近的可以被cancel的parent，即其上都不可被cancel，则启动一个goroutine等待传入的parent终止，则cancel传入的child树，或者等待传入的child终结。&lt;/p&gt;
+
+&lt;h4 id=&#34;withdeadline&#34;&gt;WithDeadLine&lt;/h4&gt;
+
+&lt;p&gt;在withCancel的基础上进行的扩展，如果时间到了之后就进行cancel的操作，具体的操作流程基本上与withCancel一致，只不过控制cancel函数调用的时机是有一个timeout的channel所控制的。&lt;/p&gt;
+
+&lt;h2 id=&#34;小tips&#34;&gt;小Tips&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;不要把Context放在结构体中，要以参数的方式传递，parent Context一般为Background&lt;/li&gt;
+&lt;li&gt;应该要把Context作为第一个参数传递给入口请求和出口请求链路上的每一个函数，放在第一位，变量名建议都统一，如ctx。&lt;/li&gt;
+&lt;li&gt;给一个函数方法传递Context的时候，不要传递nil，否则在tarce追踪的时候，就会断了连接&lt;/li&gt;
+&lt;li&gt;Context的Value相关方法应该传递必须的数据，不要什么数据都使用这个传递&lt;/li&gt;
+&lt;li&gt;Context是线程安全的，可以放心的在多个goroutine中传递&lt;/li&gt;
+&lt;li&gt;可以把一个 Context 对象传递给任意个数的 gorotuine，对它执行 取消 操作时，所有 goroutine 都会接收到取消信号。&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;参考资料&#34;&gt;参考资料&lt;/h2&gt;
+
+&lt;p&gt;&lt;a href=&#34;https://juejin.im/post/5a6873fef265da3e317e55b6&#34;&gt;掘金 -《Golang Context深入理解》&lt;/a&gt;&lt;/br&gt;
+&lt;a href=&#34;https://github.com/kat-co/concurrency-in-go-src&#34;&gt;《Go语言并发之道》 &amp;ndash; 中国电力出版社&lt;/a&gt;&lt;/p&gt;</description>
+		</item>
+		
+		<item>
+			<title>IO - 同步，异步，阻塞，非阻塞 （转）</title>
+			<link>https://blog.ni2x.com/blog/io/</link>
+			<pubDate>Thu, 16 May 2019 00:00:00 UTC</pubDate>
+			<author></author>
+			<guid>https://blog.ni2x.com/blog/io/</guid>
+			<media:content xmlns:media="http://search.yahoo.com/mrss/" url="https://blog.ni2x.com/blog/io/title.jpg" medium="image" type="image/jpg" width="100" height="100" />
+			<description>&lt;p&gt;本文讨论的是Linux环境下的network IO，介绍同步（synchronous） IO和异步（asynchronous） IO，阻塞（blocking） IO和非阻塞（non-blocking）IO等概念&lt;/p&gt;
+
+&lt;!-- TOC --&gt;
+
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;#io%e6%a8%a1%e5%9e%8b&#34;&gt;IO模型&lt;/a&gt;
+
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;#blocking-io-bio&#34;&gt;blocking IO (BIO)&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#non-blocking-io-nio&#34;&gt;non-blocking IO (NIO)&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#io-multiplexing&#34;&gt;IO multiplexing&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#asynchronous-io&#34;&gt;Asynchronous I/O&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#io%e6%a8%a1%e5%9e%8b%e6%80%bb%e7%bb%93&#34;&gt;IO模型总结&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#%e5%9f%ba%e6%9c%ac%e6%a6%82%e5%bf%b5&#34;&gt;基本概念&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#%e7%94%a8%e6%88%b7%e7%a9%ba%e9%97%b4--%e5%86%85%e6%a0%b8%e7%a9%ba%e9%97%b4&#34;&gt;用户空间 / 内核空间&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#select&#34;&gt;Select&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#%e5%87%bd%e6%95%b0%e4%bb%8b%e7%bb%8d&#34;&gt;函数介绍&lt;/a&gt;
+
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;#%e5%8f%82%e6%95%b0%e8%af%b4%e6%98%8e&#34;&gt;参数说明&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#%e8%bf%94%e5%9b%9e%e5%80%bc&#34;&gt;返回值&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#select%e8%bf%90%e8%a1%8c%e6%9c%ba%e5%88%b6&#34;&gt;select运行机制&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#select%e6%9c%ba%e5%88%b6%e7%9a%84%e9%97%ae%e9%a2%98&#34;&gt;select机制的问题&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#poll&#34;&gt;Poll&lt;/a&gt;
+
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;#%e5%8f%82%e6%95%b0%e8%af%b4%e6%98%8e-1&#34;&gt;参数说明&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#%e8%bf%94%e5%9b%9e%e5%80%bc-1&#34;&gt;返回值&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#epoll&#34;&gt;Epoll&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#%e5%bc%82%e6%ad%a5io%e6%80%bb%e7%bb%93&#34;&gt;异步IO总结&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;!-- /TOC --&gt;
+
+&lt;p&gt;常用的IO模型有五种
+- blocking IO
+- nonblocking IO
+- IO multiplexing
+- signal driven IO
+- asynchronous IO
+由于signal driven IO在实际中并不常用，这里只讨论剩下的四种IO模型。&lt;/p&gt;
+
+&lt;p&gt;再说一下IO发生时涉及的对象和步骤。
+对于一个network IO (这里我们以read举例)，它会涉及到两个系统对象，一个是调用这个IO的process (or thread)，另一个就是系统内核(kernel)。当一个read操作发生时，它会经历两个阶段：
+ 1 等待数据准备 (Waiting for the data to be ready)
+ 2 将数据从内核拷贝到进程中 (Copying the data from the kernel to the process)
+记住这两点很重要，因为这些IO Model的区别就是在两个阶段上各有不同的情况。&lt;/p&gt;
+
+&lt;h2 id=&#34;io模型&#34;&gt;IO模型&lt;/h2&gt;
+
+&lt;h3 id=&#34;blocking-io-bio&#34;&gt;blocking IO  (BIO)&lt;/h3&gt;
+
+&lt;p&gt;在linux中，默认情况下所有的socket都是blocking，一个典型的读操作流程大概是这样：&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&#34;bio.gif&#34; alt=&#34;&#34; /&gt;&lt;/p&gt;
+
+&lt;p&gt;当用户进程调用了recvfrom这个系统调用，kernel就开始了IO的第一个阶段：准备数据。对于network io来说，很多时候数据在一开始还没有到达（比如，还没有收到一个完整的UDP包），这个时候kernel就要等待足够的数据到来。而在用户进程这边，整个进程会被阻塞。当kernel一直等到数据准备好了，它就会将数据从kernel中拷贝到用户内存，然后kernel返回结果，用户进程才解除block的状态，重新运行起来。&lt;/br&gt;
+所以，blocking IO的特点就是在IO执行的两个阶段都被block了。&lt;/p&gt;
+
+&lt;h3 id=&#34;non-blocking-io-nio&#34;&gt;non-blocking IO (NIO)&lt;/h3&gt;
+
+&lt;p&gt;linux下，可以通过设置socket使其变为non-blocking。当对一个non-blocking socket执行读操作时，流程是这个样子：&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&#34;nio.gif&#34; alt=&#34;&#34; /&gt;&lt;/p&gt;
+
+&lt;p&gt;从图中可以看出，当用户进程发出read操作时，如果kernel中的数据还没有准备好，那么它并不会block用户进程，而是立刻返回一个error。从用户进程角度讲 ，它发起一个read操作后，并不需要等待，而是马上就得到了一个结果。用户进程判断结果是一个error时，它就知道数据还没有准备好，于是它可以再次发送read操作。一旦kernel中的数据准备好了，并且又再次收到了用户进程的system call，那么它马上就将数据拷贝到了用户内存，然后返回。&lt;/br&gt;
+所以，用户进程其实是需要不断的主动询问kernel数据好了没有。&lt;/p&gt;
+
+&lt;h3 id=&#34;io-multiplexing&#34;&gt;IO multiplexing&lt;/h3&gt;
+
+&lt;p&gt;IO multiplexing这个词可能有点陌生，但是如果我说select，epoll，大概就都能明白了。有些地方也称这种IO方式为event driven IO。&lt;strong&gt;我们都知道，select/epoll的好处就在于单个process就可以同时处理多个网络连接的IO。它的基本原理就是select/epoll这个function会不断的轮询所负责的所有socket。&lt;/strong&gt;当某个socket有数据到达了，就通知用户进程。它的流程如图：
+mu&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&#34;multiplexing.gif&#34; alt=&#34;&#34; /&gt;&lt;/p&gt;
+
+&lt;p&gt;当用户进程调用了select，那么整个进程会被block，而同时，kernel会“监视”所有select负责的socket，当任何一个socket中的数据准备好了，select就会返回。这个时候用户进程再调用read操作，将数据从kernel拷贝到用户进程。&lt;/br&gt;
+这个图和blocking IO的图其实并没有太大的不同，事实上，还更差一些。因为这里需要使用两个system call (select 和 recvfrom)，而blocking IO只调用了一个system call (recvfrom)。但是，用select的优势在于它可以同时处理多个connection。（多说一句。所以，如果处理的连接数不是很高的话，使用select/epoll的web server不一定比使用multi-threading + blocking IO的web server性能更好，可能延迟还更大。select/epoll的优势并不是对于单个连接能处理得更快，而是在于能处理更多的连接。）&lt;/br&gt;
+在IO multiplexing Model中，实际中，对于每一个socket，一般都设置成为non-blocking，但是，如上图所示，整个用户的process其实是一直被block的。只不过process是被select这个函数block，而不是被socket IO给block。&lt;/br&gt;&lt;/p&gt;
+
+&lt;h3 id=&#34;asynchronous-i-o&#34;&gt;Asynchronous I/O&lt;/h3&gt;
+
+&lt;p&gt;linux下的asynchronous IO其实用得很少。先看一下它的流程：&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&#34;asynchronous.gif&#34; alt=&#34;&#34; /&gt;&lt;/p&gt;
+
+&lt;p&gt;用户进程发起read操作之后，立刻就可以开始去做其它的事。而另一方面，从kernel的角度，当它受到一个asynchronous read之后，首先它会立刻返回，所以不会对用户进程产生任何block。然后，kernel会等待数据准备完成，然后将数据拷贝到用户内存，当这一切都完成之后，kernel会给用户进程发送一个signal，告诉它read操作完成了。&lt;/p&gt;
+
+&lt;h3 id=&#34;io模型总结&#34;&gt;IO模型总结&lt;/h3&gt;
+
+&lt;p&gt;到目前为止，已经将四个IO Model都介绍完了。现在回过头来回答最初的那几个问题：blocking和non-blocking的区别在哪，synchronous IO和asynchronous IO的区别在哪。&lt;/br&gt;
+先回答最简单的这个：blocking vs non-blocking。前面的介绍中其实已经很明确的说明了这两者的区别。调用blocking IO会一直block住对应的进程直到操作完成，而non-blocking IO在kernel还准备数据的情况下会立刻返回。&lt;/br&gt;
+&lt;/br&gt;
+在说明synchronous IO和asynchronous IO的区别之前，需要先给出两者的定义。Stevens给出的定义（其实是POSIX的定义）是这样子的：
+&amp;gt; A synchronous I/O operation causes the requesting process to be blocked until that I/O operation completes;&lt;/br&gt;
+&amp;gt; An asynchronous I/O operation does not cause the requesting process to be blocked; &lt;/br&gt;&lt;/p&gt;
+
+&lt;p&gt;两者的区别就在于synchronous IO做”IO operation”的时候会将process阻塞。按照这个定义，之前所述的blocking IO，non-blocking IO，IO multiplexing都属于synchronous IO。有人可能会说，non-blocking IO并没有被block啊。这里有个非常“狡猾”的地方，定义中所指的”IO operation”是指真实的IO操作，就是例子中的recvfrom这个system call。non-blocking IO在执行recvfrom这个system call的时候，如果kernel的数据没有准备好，这时候不会block进程。但是，当kernel中数据准备好的时候，recvfrom会将数据从kernel拷贝到用户内存中，这个时候进程是被block了，在这段时间内，进程是被block的。而asynchronous IO则不一样，当进程发起IO 操作之后，就直接返回再也不理睬了，直到kernel发送一个信号，告诉进程说IO完成。在这整个过程中，进程完全没有被block。&lt;/br&gt;
+&lt;/br&gt;
+各个IO Model的比较如图所示：&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&#34;summary.gif&#34; alt=&#34;&#34; /&gt;&lt;/p&gt;
+
+&lt;p&gt;经过上面的介绍，会发现non-blocking IO和asynchronous IO的区别还是很明显的。在non-blocking IO中，虽然进程大部分时间都不会被block，但是它仍然要求进程去主动的check，并且当数据准备完成以后，也需要进程主动的再次调用recvfrom来将数据拷贝到用户内存。而asynchronous IO则完全不同。它就像是用户进程将整个IO操作交给了他人（kernel）完成，然后他人做完后发信号通知。在此期间，用户进程不需要去检查IO操作的状态，也不需要主动的去拷贝数据。&lt;/p&gt;
+
+&lt;p&gt;##IO多路复用
+什么是IO多路复用？
+&amp;gt;I/O多路复用（multiplexing）的本质是通过一种机制（系统内核缓冲I/O数据），让单个进程可以监视多个文件描述符，一旦某个描述符就绪（一般是读就绪或写就绪），能够通知程序进行相应的读写操作&lt;/p&gt;
+
+&lt;p&gt;select、poll 和 epoll 都是 Linux API 提供的 IO 复用方式。&lt;/br&gt;&lt;/p&gt;
+
+&lt;p&gt;大家都了解了前面介绍的五中IO模型。除了 asynchronous IO，都可以归类为synchronous IO - 同步IO。&lt;/br&gt;&lt;/p&gt;
+
+&lt;p&gt;而select、poll、epoll本质上也都是同步I/O，因为他们都需要在读写事件就绪后自己负责进行读写，也就是说这个读写过程是阻塞的。&lt;/br&gt;&lt;/p&gt;
+
+&lt;p&gt;与多进程和多线程技术相比，I/O多路复用技术的最大优势是系统开销小，系统不必创建进程/线程，也不必维护这些进程/线程，从而大大减小了系统的开销。&lt;/br&gt;&lt;/p&gt;
+
+&lt;h3 id=&#34;基本概念&#34;&gt;基本概念&lt;/h3&gt;
+
+&lt;p&gt;在介绍select、poll、epoll之前，首先介绍一下Linux操作系统中基础的概念：&lt;/p&gt;
+
+&lt;h4 id=&#34;用户空间-内核空间&#34;&gt;用户空间 / 内核空间&lt;/h4&gt;
+
+&lt;p&gt;现在操作系统都是采用虚拟存储器，那么对32位操作系统而言，它的寻址空间（虚拟存储空间）为4G（2的32次方）。
+操作系统的核心是内核，独立于普通的应用程序，可以访问受保护的内存空间，也有访问底层硬件设备的所有权限。为了保证用户进程不能直接操作内核（kernel），保证内核的安全，操作系统将虚拟空间划分为两部分，一部分为内核空间，一部分为用户空间。&lt;/p&gt;
+
+&lt;p&gt;####进程切换
+为了控制进程的执行，内核必须有能力挂起正在CPU上运行的进程，并恢复以前挂起的某个进程的执行。这种行为被称为进程切换。因此可以说，任何进程都是在操作系统内核的支持下运行的，是与内核紧密相关的，并且进程切换是非常耗费资源的。&lt;/p&gt;
+
+&lt;p&gt;####进程阻塞
+正在执行的进程，由于期待的某些事件未发生，如请求系统资源失败、等待某种操作的完成、新数据尚未到达或无新工作做等，则由系统自动执行阻塞原语(Block)，使自己由运行状态变为阻塞状态。可见，进程的阻塞是进程自身的一种主动行为，也因此只有处于运行态的进程（获得了CPU资源），才可能将其转为阻塞状态。当进程进入阻塞状态，是不占用CPU资源的。&lt;/p&gt;
+
+&lt;p&gt;####文件描述符
+文件描述符（File descriptor）是计算机科学中的一个术语，是一个用于表述指向文件的引用的抽象化概念。
+文件描述符在形式上是一个非负整数。实际上，它是一个索引值，指向内核为每一个进程所维护的该进程打开文件的记录表。当程序打开一个现有文件或者创建一个新文件时，内核向进程返回一个文件描述符。在程序设计中，一些涉及底层的程序编写往往会围绕着文件描述符展开。但是文件描述符这一概念往往只适用于UNIX、Linux这样的操作系统。&lt;/p&gt;
+
+&lt;p&gt;####缓存I/O
+缓存I/O又称为标准I/O，大多数文件系统的默认I/O操作都是缓存I/O。在Linux的缓存I/O机制中，操作系统会将I/O的数据缓存在文件系统的页缓存中，即数据会先被拷贝到操作系统内核的缓冲区中，然后才会从操作系统内核的缓冲区拷贝到应用程序的地址空间。&lt;/p&gt;
+
+&lt;h3 id=&#34;select&#34;&gt;Select&lt;/h3&gt;
+
+&lt;h4 id=&#34;函数介绍&#34;&gt;函数介绍&lt;/h4&gt;
+
+&lt;p&gt;我们先分析一下select函数
+&amp;gt;int select(int maxfdp1,fd_set *readset,fd_set *writeset,fd_set *exceptset,const struct timeval *timeout);&lt;/p&gt;
+
+&lt;h5 id=&#34;参数说明&#34;&gt;参数说明&lt;/h5&gt;
+
+&lt;ul&gt;
+&lt;li&gt;int maxfdp1
+&lt;br /&gt;&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;指定待测试的文件描述字个数，它的值是待测试的最大描述字加1。&lt;/br&gt;&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;fd_set *readset , fd_set *writeset , fd_set *exceptset&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;fd_set可以理解为一个集合，这个集合中存放的是文件描述符(file descriptor)，即文件句柄。中间的三个参数指定我们要让内核测试读、写和异常条件的文件描述符集合。如果对某一个的条件不感兴趣，就可以把它设为空指针。&lt;/br&gt;
+const struct timeval *timeout timeout告知内核等待所指定文件描述符集合中的任何一个就绪可花多少时间。其timeval结构用于指定这段时间的秒数和微秒数。&lt;/br&gt;&lt;/p&gt;
+
+&lt;h5 id=&#34;返回值&#34;&gt;返回值&lt;/h5&gt;
+
+&lt;ul&gt;
+&lt;li&gt;int
+&lt;br /&gt;&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;若有就绪描述符返回其数目，若超时则为0，若出错则为-1&lt;/p&gt;
+
+&lt;h4 id=&#34;select运行机制&#34;&gt;select运行机制&lt;/h4&gt;
+
+&lt;p&gt;select()的机制中提供一种fd_set的数据结构，实际上是一个long类型的数组，每一个数组元素都能与一打开的文件句柄（不管是Socket句柄,还是其他文件或命名管道或设备句柄）建立联系，建立联系的工作由程序员完成，当调用select()时，由内核根据IO状态修改fd_set的内容，由此来通知执行了select()的进程哪一Socket或文件可读。&lt;/br&gt;
+从流程上来看，使用select函数进行IO请求和同步阻塞模型没有太大的区别，甚至还多了添加监视socket，以及调用select函数的额外操作，效率更差。但是，使用select以后最大的优势是用户可以在一个线程内同时处理多个socket的IO请求。用户可以注册多个socket，然后不断地调用select读取被激活的socket，即可达到在同一个线程内同时处理多个IO请求的目的。而在同步阻塞模型中，必须通过多线程的方式才能达到这个目的。&lt;/br&gt;&lt;/p&gt;
+
+&lt;h4 id=&#34;select机制的问题&#34;&gt;select机制的问题&lt;/h4&gt;
+
+&lt;p&gt;每次调用select，都需要把fd_set集合从用户态拷贝到内核态，如果fd_set集合很大时，那这个开销也很大&lt;/br&gt;
+同时每次调用select都需要在内核遍历传递进来的所有fd_set，如果fd_set集合很大时，那这个开销也很大&lt;/br&gt;
+为了减少数据拷贝带来的性能损坏，内核对被监控的fd_set集合大小做了限制，并且这个是通过宏控制的，大小不可改变(限制为1024)&lt;/br&gt;&lt;/p&gt;
+
+&lt;h3 id=&#34;poll&#34;&gt;Poll&lt;/h3&gt;
+
+&lt;p&gt;poll的机制与select类似，与select在本质上没有多大差别，管理多个描述符也是进行轮询，根据描述符的状态进行处理，但是poll没有最大文件描述符数量的限制。也就是说，poll只解决了上面的问题3，并没有解决问题1，2的性能开销问题。&lt;/br&gt;
+&lt;/br&gt;
+下面是pll的函数原型：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-c&#34;&gt;int poll(struct pollfd *fds, nfds_t nfds, int timeout);
+
+typedef struct pollfd {
+        int fd;                         // 需要被检测或选择的文件描述符
+        short events;                   // 对文件描述符fd上感兴趣的事件
+        short revents;                  // 文件描述符fd上当前实际发生的事件
+} pollfd_t;
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;poll改变了文件描述符集合的描述方式，使用了pollfd结构而不是select的fd_set结构，使得poll支持的文件描述符集合限制远大于select的1024&lt;/p&gt;
+
+&lt;h5 id=&#34;参数说明-1&#34;&gt;参数说明&lt;/h5&gt;
+
+&lt;ul&gt;
+&lt;li&gt;struct pollfd *fds&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;fds是一个struct pollfd类型的数组，用于存放需要检测其状态的socket描述符，并且调用poll函数之后fds数组不会被清空；一个pollfd结构体表示一个被监视的文件描述符，通过传递fds指示 poll() 监视多个文件描述符。其中，结构体的events域是监视该文件描述符的事件掩码，由用户来设置这个域，结构体的revents域是文件描述符的操作结果事件掩码，内核在调用返回时设置这个域&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;nfds_t nfds&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;记录数组fds中描述符的总数量&lt;/p&gt;
+
+&lt;h5 id=&#34;返回值-1&#34;&gt;返回值&lt;/h5&gt;
+
+&lt;ul&gt;
+&lt;li&gt;int&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;函数返回fds集合中就绪的读、写，或出错的描述符数量，返回0表示超时，返回-1表示出错&lt;/p&gt;
+
+&lt;h3 id=&#34;epoll&#34;&gt;Epoll&lt;/h3&gt;
+
+&lt;p&gt;epoll在Linux2.6内核正式提出，是基于事件驱动的I/O方式，相对于select来说，epoll没有描述符个数限制，使用一个文件描述符管理多个描述符，将用户关心的文件描述符的事件存放到内核的一个事件表中，这样在用户空间和内核空间的copy只需一次。&lt;/p&gt;
+
+&lt;p&gt;Linux中提供的epoll相关函数如下：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-c&#34;&gt;int epoll_create(int size);
+int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
+int epoll_wait(int epfd, struct epoll_event * events, int maxevents, int timeout);
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&lt;strong&gt;1. epoll_create&lt;/strong&gt; 函数创建一个epoll句柄，参数size表明内核要监听的描述符数量。调用成功时返回一个epoll句柄描述符，失败时返回-1。&lt;/br&gt;
+&lt;/br&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;2. epoll_ctl&lt;/strong&gt; 函数注册要监听的事件类型。四个参数解释如下：&lt;/br&gt;&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;epfd&lt;/code&gt; 表示epoll句柄&lt;/li&gt;
+
+&lt;li&gt;&lt;p&gt;&lt;code&gt;op&lt;/code&gt; 表示fd操作类型，有如下三种&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;EPOLL_CTL_ADD 注册新的fd到epfd中&lt;/li&gt;
+&lt;li&gt;EPOLL_CTL_MOD 修改已注册的fd的监听事件&lt;/li&gt;
+&lt;li&gt;EPOLL_CTL_DEL 从epfd中删除一个fd&lt;/li&gt;
+&lt;/ul&gt;&lt;/li&gt;
+
+&lt;li&gt;&lt;p&gt;&lt;code&gt;fd&lt;/code&gt; 是要监听的描述符&lt;/p&gt;&lt;/li&gt;
+
+&lt;li&gt;&lt;p&gt;&lt;code&gt;event&lt;/code&gt; 表示要监听的事件&lt;/p&gt;&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;首先，需要调用epoll_create来创建一个epoll的文件描述符，内核会同时创建一个eventpoll的数据结构。这个数据结构里面会包含两个东西，一个是红黑树，专门用于存储epoll_ctl注册进来的fd文件描述符；另外一个是就绪链表，用来存储epoll_wait调用相关的，已经就绪的那些fd文件描述符。&lt;/br&gt;&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-c&#34;&gt;struct eventpoll{
+    struct rb_root  rbr;      //红黑树的根节点，存储着所有添加到epoll中的需要监控的事件
+    struct list_head rdlist;        // 双链表中存放着将要通过epoll_wait返回给用户的满足条件的事件
+};
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&lt;img src=&#34;rb_tree.png&#34; alt=&#34;&#34; /&gt;&lt;/p&gt;
+
+&lt;p&gt;epoll_event 结构体定义如下：&lt;/br&gt;&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-c&#34;&gt;struct epoll_event {
+    __uint32_t events;  /* Epoll events */
+    epoll_data_t data;  /* User data variable */
+};
+
+typedef union epoll_data {
+    void *ptr;
+    int fd;
+    __uint32_t u32;
+    __uint64_t u64;
+} epoll_data_t;
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&lt;strong&gt;3. epoll_wait&lt;/strong&gt; 函数等待事件的就绪，成功时返回就绪的事件数目，调用失败时返回 -1，等待超时返回 0。&lt;/br&gt;
+&lt;/br&gt;
+- &lt;code&gt;epfd&lt;/code&gt; 是epoll句柄
+- &lt;code&gt;events&lt;/code&gt; 表示从内核得到的就绪事件集合
+- &lt;code&gt;maxevents&lt;/code&gt; 告诉内核events的大小
+- &lt;code&gt;timeout&lt;/code&gt; 表示等待的超时事件&lt;/p&gt;
+
+&lt;p&gt;epoll是Linux内核为处理大批量文件描述符而作了改进的poll，是Linux下多路复用IO接口select/poll的增强版本，它能显著提高程序在大量并发连接中只有少量活跃的情况下的系统CPU利用率。原因就是获取事件的时候，它无须遍历整个被侦听的描述符集，只要遍历那些被内核IO事件异步唤醒而加入Ready队列的描述符集合就行了。&lt;/br&gt;&lt;/p&gt;
+
+&lt;p&gt;epoll除了提供select/poll那种IO事件的水平触发（Level Triggered）外，还提供了边缘触发（Edge Triggered），这就使得用户空间程序有可能缓存IO状态，减少epoll_wait/epoll_pwait的调用，提高应用程序效率。&lt;/br&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;水平触发（LT）&lt;/strong&gt;：默认工作模式，即当epoll_wait检测到某描述符事件就绪并通知应用程序时，应用程序可以不立即处理该事件；下次调用epoll_wait时，会再次通知此事件
+&lt;strong&gt;边缘触发（ET）&lt;/strong&gt;： 当epoll_wait检测到某描述符事件就绪并通知应用程序时，应用程序必须立即处理该事件。如果不处理，下次调用epoll_wait时，不会再次通知此事件。（直到你做了某些操作导致该描述符变成未就绪状态了，也就是说边缘触发只在状态由未就绪变为就绪时只通知一次）。&lt;/p&gt;
+
+&lt;p&gt;LT和ET原本应该是用于脉冲信号的，可能用它来解释更加形象。Level和Edge指的就是触发点，Level为只要处于水平，那么就一直触发，而Edge则为上升沿和下降沿的时候触发。比如：0-&amp;gt;1 就是Edge，1-&amp;gt;1 就是Level。&lt;/br&gt;&lt;/p&gt;
+
+&lt;p&gt;ET模式很大程度上减少了epoll事件的触发次数，因此效率比LT模式下高。&lt;/br&gt;&lt;/p&gt;
+
+&lt;h3 id=&#34;异步io总结&#34;&gt;异步IO总结&lt;/h3&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;&amp;nbsp;&lt;/th&gt;
+&lt;th&gt;select&lt;/th&gt;
+&lt;th&gt;poll&lt;/th&gt;
+&lt;th&gt;epoll&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;操作方式&lt;/td&gt;
+&lt;td&gt;遍历&lt;/td&gt;
+&lt;td&gt;遍历&lt;/td&gt;
+&lt;td&gt;回调&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td&gt;底层实现&lt;/td&gt;
+&lt;td&gt;数组&lt;/td&gt;
+&lt;td&gt;链表&lt;/td&gt;
+&lt;td&gt;哈希表&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td&gt;IO效率&lt;/td&gt;
+&lt;td&gt;每次调用都进行线性遍历，时间复杂度为O(n)&lt;/td&gt;
+&lt;td&gt;每次调用都进行线性遍历，时间复杂度为O(n)&lt;/td&gt;
+&lt;td&gt;事件通知方式，每当fd就绪，系统注册的回调函数就会被调用，将就绪fd放到readyList里面，时间复杂度O(1)&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td&gt;最大连接数&lt;/td&gt;
+&lt;td&gt;1024（x86）或2048（x64）&lt;/td&gt;
+&lt;td&gt;无上限&lt;/td&gt;
+&lt;td&gt;无上限&lt;/td&gt;
+&lt;/tr&gt;
+
+&lt;tr&gt;
+&lt;td&gt;fd拷贝&lt;/td&gt;
+&lt;td&gt;每次调用select，都需要把fd集合从用户态拷贝到内核态&lt;/td&gt;
+&lt;td&gt;每次调用poll，都需要把fd集合从用户态拷贝到内核态&lt;/td&gt;
+&lt;td&gt;调用epoll_ctl时拷贝进内核并保存，之后每次epoll_wait不拷贝&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;epoll是Linux目前大规模网络并发程序开发的首选模型。在绝大多数情况下性能远超select和poll。目前流行的高性能web服务器Nginx正式依赖于epoll提供的高效网络套接字轮询服务。但是，在并发连接不高的情况下，多线程+阻塞I/O方式可能性能更好。&lt;/br&gt;&lt;/p&gt;</description>
+		</item>
+		
+		<item>
+			<title>HTTP长连接，短连接和连接池</title>
+			<link>https://blog.ni2x.com/blog/keepalive/</link>
+			<pubDate>Wed, 01 May 2019 00:00:00 UTC</pubDate>
+			<author></author>
+			<guid>https://blog.ni2x.com/blog/keepalive/</guid>
+			<media:content xmlns:media="http://search.yahoo.com/mrss/" url="https://blog.ni2x.com/blog/keepalive/title.jpeg" medium="image" type="image/jpg" width="100" height="100" />
+			<description>&lt;p&gt;最近在复盘研究去年压测期间出现的一些网络问题时，重新对HTTP和TCP连接进行了深入学习，也对微服务下系统间的调用有了更深的理解&lt;/p&gt;
+
+&lt;h3 id=&#34;tcp连接&#34;&gt;TCP连接&lt;/h3&gt;
+
+&lt;p&gt;众所周知，采用TCP协议进行网络通信时，在真正的读写操作之前，server与client之间必须建立一个连接，这也是我们常说的&lt;strong&gt;&amp;ldquo;三次握手&amp;rdquo;&lt;/strong&gt;&lt;/p&gt;
+
+&lt;h4 id=&#34;tcp短连接&#34;&gt;TCP短连接&lt;/h4&gt;
+
+&lt;p&gt;让我们先看看短连接的情况：
+client向server发起连接请求，server接到请求，然后双方建立连接。client向server发送消息，server回应client，然后一次读写就完成了，这时候双方任何一个都可以发起close操作。短连接一般只会在client/server间传递一次读写操作。&lt;/p&gt;
+
+&lt;p&gt;当读写操作完成后，双方不再需要这个连接时，它们就可以释放这个连接。而释放则又需要&lt;strong&gt;四次握手&lt;/strong&gt;，所以说每个连接的建立和释放都是需要消耗资源和时间的。&lt;/p&gt;
+
+&lt;p&gt;除此之前，tcp主动断开的一方会进入TIME_WAIT状态，并且持续90s-120s不等的时间。尽管Linux设计了一套回收机制来处理这个问题，但在高并发下仍然会出现大量的TIME_WAIT，影响新的连接的建立。&lt;/p&gt;
+
+&lt;h4 id=&#34;tcp长连接&#34;&gt;TCP长连接&lt;/h4&gt;
+
+&lt;p&gt;由于我们不希望资源都浪费在频繁建立和释放TCP连接上，这时候TCP长连接的方案便出现了。&lt;/p&gt;
+
+&lt;p&gt;当我们使用长连接时，client向server发起连接，server接受client连接，双方建立连接。Client与server完成一次读写之后，&lt;strong&gt;它们之间的连接并不会主动关闭&lt;/strong&gt;，后续的读写操作会继续使用这个连接。&lt;/p&gt;
+
+&lt;p&gt;那怎么确定等待的时候客户端还存在呢，这时候就需要说一个概念：TCP保活功能。&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;保活功能主要为服务器应用提供，服务器应用希望知道客户主机是否崩溃，从而可以代表客户使用资源&lt;/strong&gt;。如果客户已经消失，使得服务器上保留一个半开放的连接，而服务器又在等待来自客户端的数据，则服务器将应远等待客户端的数据，保活功能就是试图在服务器端检测到这种半开放的连接。&lt;/p&gt;
+
+&lt;p&gt;如果一个给定的连接在两小时内没有任何的动作，则服务器就向客户发一个探测报文段，客户主机必须处于以下4个状态之一：&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;客户主机依然正常运行，并从服务器可达。客户的TCP响应正常，而服务器也知道对方是正常的，服务器在两小时后将保活定时器复位。&lt;/li&gt;
+&lt;li&gt;客户主机已经崩溃，并且关闭或者正在重新启动。在任何一种情况下，客户的TCP都没有响应。服务端将不能收到对探测的响应，并在75秒后超时。服务器总共发送10个这样的探测 ，每个间隔75秒。如果服务器没有收到一个响应，它就认为客户主机已经关闭并终止连接。&lt;/li&gt;
+&lt;li&gt;客户主机崩溃并已经重新启动。服务器将收到一个对其保活探测的响应，这个响应是一个复位，使得服务器终止这个连接。&lt;/li&gt;
+&lt;li&gt;客户机正常运行，但是服务器不可达，这种情况与2类似，TCP能发现的就是没有收到探查的响应。&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;但从上面可以看出，保持连接后虽然可以使用TCP保活功能探测长连接的存活状况，不过这里存在一个问题，存活功能的探测周期太长，还有就是它只是探测TCP连接的存活，遇到恶意的连接时，就会白白浪费连接资源。&lt;/p&gt;
+
+&lt;p&gt;在长连接的应用场景下，client端一般不会主动关闭它们之间的连接，Client与server之间的连接如果一直不关闭的话，会存在一个问题，随着客户端连接越来越多，server早晚有扛不住的时候，这时候server端需要采取一些策略，如关闭一些长时间没有读写事件发生的连接，或者以客户端机器为颗粒度，限制每个客户端的最大长连接数，这样可以避免一些恶意连接导致server端服务受损。&lt;/p&gt;
+
+&lt;h3 id=&#34;http长连接&#34;&gt;HTTP长连接&lt;/h3&gt;
+
+&lt;p&gt;既然TCP长连接有这么多的弊端，那有没有更好的方式复用TCP连接呢？这就要请出我们今天的主角了：HTTP长连接
+HTTP长连接看上去和TCP长连接很像，而且功能也很相似，以至于很多同学把它们当做一个东西。其实它们有很大的区别！&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;TCP长连接用于探测对端是否存在，而 HTTP长连接用于协商以复用TCP连接&lt;/strong&gt;。&lt;/p&gt;
+
+&lt;p&gt;太晦涩了？OK，这么解释你就明白了：&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;1）&lt;/strong&gt;当一个请求结束后，服务端对客户端说：兄弟，我这个通道先不关闭啦，你要传啥数据就继续用这个通道就好啦。
+两个小时后，服务端过来问一句：兄弟，你还在么。客户端回答：&amp;rdquo;在着呢&amp;rdquo;。
+又过了两个小时，服务端又过来问一句：兄弟，你还在么。这次客户端没有回答了。这时候服务端就把此次连接关闭了。&lt;strong&gt;这就是TCP长连接&lt;/strong&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;2）&lt;/strong&gt; 当一个请求结束前，客户端对服务端说：等会我可能不止一个请求啊，第一个完了后你等等我，服务端：好的。客户端于是接连发了好几个请求。再过了一会(idletimeout)，服务端发现客户端没动静了没有新的请求发送，便断掉了这次连接，&lt;strong&gt;这就是HTTP长连接&lt;/strong&gt;&lt;/p&gt;
+
+&lt;p&gt;现在你明白了吧。即便一个 TCP 连接未启用长连接功能，也不妨碍HTTP层面开启长连接。&lt;strong&gt;它们是两个目的不同的技术，也不存在谁依赖于谁的关系&lt;/strong&gt;。&lt;/p&gt;
+
+&lt;h3 id=&#34;http连接池&#34;&gt;HTTP连接池&lt;/h3&gt;
+
+&lt;p&gt;到这里，看上去HTTP长连接已经能满足我们大部分需求了。那我们常见的HTTP连接池又是做什么的呢
+从上面长连接的介绍中我们能知道，请求结束后，下一个紧接的请求能复用HTTP长连接。但如果出现下面的情况：
+1）短时间内进行大量请求。也就是说，上一次请求还没有结束就发起了新的请求。这时候由于连接已被占用，只能发起新的TCP连接。
+2）旧的连接由于过了等待超时时间（idletimeout）被释放，这时候新的连接过来，仍然需要重新经过三次握手创建连接&lt;/p&gt;
+
+&lt;p&gt;那HTTP连接池是什么呢？它会帮你维持一定数量的连接。当连接使用完之后，不会释放掉，而是放回连接池中，并帮你保持长连接。这样就算你过了超时时间再请求，从连接池中取出的连接也是能直接使用的。在并发较高的场景下，不但能提前预创建好连接，而且能高效复用连接，避免连接的泄漏。&lt;/p&gt;
+
+&lt;h3 id=&#34;go语言中如何进行http请求&#34;&gt;Go语言中如何进行HTTP请求&lt;/h3&gt;
+
+&lt;p&gt;这时候写过Golang的同学可能会问：&amp;rdquo;可是我们平时使用Golang的时候并没有刻意地去使用长连接和连接池呀，也运行得好好的呀&amp;rdquo; φ(≧ω≦*)♪
+是这样的，不过你是否知道，这是因为Golang从语言层面已经支持了HTTP连接池和长连接，而且我们现在使用的HTTP1.1默认使用的就是HTTP长连接。&lt;/p&gt;
+
+&lt;p&gt;让我看一次最普通的HTTP请求&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-go&#34;&gt;package main
+
+import (
+	&amp;quot;fmt&amp;quot;
+	&amp;quot;io/ioutil&amp;quot;
+	&amp;quot;net/http&amp;quot;
+)
+
+func main() {
+	var c = &amp;amp;http.Client{
+		Transport: http.DefaultTransport,
+	}
+	response, err := c.Get(&amp;quot;http://baidu.com&amp;quot;)
+	if err != nil {
+		fmt.Printf(&amp;quot;error:%s\n&amp;quot;, err)
+		return
+	}
+	// 如果结束时Body不close掉，连接会一直处于ESTABLISHED状态，造成连接泄漏
+	defer response.Body.Close()
+	// 如果Body数据不全部读取掉，会造成TCP连接无法复用，每次新建连接
+	ioutil.ReadAll(response.Body)
+	
+	
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;我们创建了一个client，使用了默认的Transport，然后进行了一次HTTP请求。看上去平淡无奇，其实每一步都&amp;rdquo;暗藏玄机&amp;rdquo;
+Transport可以理解为一个连接池。我们先看看系统默认的Transport，也就是DefaultTransport&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-go&#34;&gt;// DefaultTransport is the default implementation of Transport and is
+// used by DefaultClient. It establishes network connections as needed
+// and caches them for reuse by subsequent calls. It uses HTTP proxies
+// as directed by the $HTTP_PROXY and $NO_PROXY (or $http_proxy and
+// $no_proxy) environment variables.
+var DefaultTransport RoundTripper = &amp;amp;Transport{
+	Proxy: ProxyFromEnvironment,
+	DialContext: (&amp;amp;net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+		DualStack: true,
+	}).DialContext,
+	// 最多维持100个空闲连接
+	MaxIdleConns:          100,
+	// 每个连接有90秒的等待时间
+	IdleConnTimeout:       90 * time.Second,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ExpectContinueTimeout: 1 * time.Second,
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;先说最重要的一点：&lt;strong&gt;一般情况下，一个服务使用一个Transport即可&lt;/strong&gt;。每次请求时都实例化一个Transport会造成大量浪费，并且会造成连接不能复用。
+DefaultTransport会帮你维持100个空闲连接，每个连接有90秒的等待时间。而且yo由于没有设置DisableKeepAlives参数，所以默认开启了HTTP长连接。
+如果需要自定义，可以新建Transport对象，设定你要改的值即可。（注意，没有设定的值，大多默认为&lt;strong&gt;无限制&lt;/strong&gt;）&lt;/p&gt;
+
+&lt;p&gt;当请求结束后，接下里的两个动作也很重要&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-go&#34;&gt;response, err := c.Get(&amp;quot;http://baidu.com&amp;quot;)
+if err != nil {
+   fmt.Printf(&amp;quot;error:%s\n&amp;quot;, err)
+   return
+}
+defer response.Body.Close()
+ioutil.ReadAll(response.Body)
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;为什么说这两个动作很重要呢，因为这关系到HTTP的复用问题。&lt;/p&gt;
+
+&lt;p&gt;我们先看一下Golang官方对Body的注释&lt;/p&gt;
+
+&lt;blockquote&gt;
+&lt;p&gt;The http Client and Transport guarantee that Body is always
+non-nil, even on responses without a body or responses with
+a zero-length body. It is the caller&amp;rsquo;s responsibility
+close Body. The default HTTP client&amp;rsquo;s Transport may not
+reuse HTTP/1.x &amp;ldquo;keep-alive&amp;rdquo; TCP connections if the Body is
+not read to completion and closed.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;也就是说，response.Body的关闭是调用者的责任。如果结束时Body不close掉，连接会一直处于ESTABLISHED状态，造成连接泄漏。而如果Body数据不全部读取掉，会造成TCP连接无法复用，每次新建连接&lt;/p&gt;
+
+&lt;h3 id=&#34;http-2多路复用&#34;&gt;HTTP/2多路复用&lt;/h3&gt;
+
+&lt;h4 id=&#34;http-1-1长连接还是存在效率问题&#34;&gt;HTTP/1.1长连接还是存在效率问题&lt;/h4&gt;
+
+&lt;p&gt;如上面所说，在HTTP1.1中是默认开启了Keep-Alive，他解决了多次连接的问题，但是依然有两个效率上的问题：&lt;/p&gt;
+
+&lt;p&gt;第一个：串行的文件传输。当请求a文件时，b文件只能等待，等待a连接到服务器、服务器处理文件、服务器返回文件，这三个步骤。我们假设这三步用时都是1秒，那么a文件用时为3秒，b文件传输完成用时为6秒，依此类推。（注：此项计算有一个前提条件，就是浏览器和服务器是单通道传输）
+第二个：连接数过多。我们假设Apache设置了最大并发数为300，因为浏览器限制，浏览器发起的最大请求数为6，也就是服务器能承载的最高并发为50，当第51个人访问时，就需要等待前面某个请求处理完成。&lt;/p&gt;
+
+&lt;h4 id=&#34;http-2的多路复用&#34;&gt;HTTP/2的多路复用&lt;/h4&gt;
+
+&lt;p&gt;HTTP/2的多路复用就是为了解决上述的两个性能问题，我们来看一下，他是如何解决的。&lt;/p&gt;
+
+&lt;p&gt;解决第一个：在HTTP1.1的协议中，我们传输的request和response都是基本于文本的，这样就会引发一个问题：所有的数据必须按顺序传输，比如需要传输：hello world，只能从h到d一个一个的传输，不能并行传输，因为接收端并不知道这些字符的顺序，所以并行传输在HTTP1.1是不能实现的。
+&lt;img src=&#34;http2-1.png&#34; alt=&#34;&#34; /&gt;&lt;/p&gt;
+
+&lt;p&gt;HTTP/2引入二进制数据帧和流的概念，其中帧对数据进行顺序标识，如下图所示，这样浏览器收到数据之后，就可以按照序列对数据进行合并，而不会出现合并后数据错乱的情况。同样是因为有了序列，服务器就可以并行的传输数据，这就是流所做的事情。&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&#34;http2-2.png&#34; alt=&#34;&#34; /&gt;&lt;/p&gt;
+
+&lt;p&gt;解决第二个问题：HTTP/2对同一域名下所有请求都是基于流，也就是说同一域名不管访问多少文件，也只建立一路连接。同样Apache的最大连接数为300，因为有了这个新特性，最大的并发就可以提升到300，比原来提升了6倍！&lt;/p&gt;
+
+&lt;h3 id=&#34;更好的方案&#34;&gt;更好的方案？&lt;/h3&gt;
+
+&lt;p&gt;从上面的分析可以看到，HTTP RESTful的方式作系统间调用其实有很多&amp;rdquo;坑&amp;rdquo;，有没有更简单直接的方式呢？
+&lt;img src=&#34;rest-rpc.png&#34; alt=&#34;&#34; /&gt;
+这是一张经典的微服务架构图，可以看到：&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;用户和前台通过HTTP进行通信&lt;/li&gt;
+&lt;li&gt;系统前，中，后台间通过RPC进行通信（如果使用gRPC，因为是基于HTTP/2，还能进行多路复用）&lt;/li&gt;
+&lt;li&gt;系统与数据中心通过消息队列通信&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h3 id=&#34;总结&#34;&gt;总结&lt;/h3&gt;
+
+&lt;ul&gt;
+&lt;li&gt;TCP长连接和HTTP长连接是两种不同的技术，也不存在依赖关系&lt;/li&gt;
+&lt;li&gt;TCP长连接用于探测对端是否存在，而 HTTP长连接用于协商以复用TCP连接&lt;/li&gt;
+&lt;li&gt;HTTP连接池能帮你维持一定数量的连接，提高连接复用的效率。&lt;/li&gt;
+&lt;li&gt;Golang在语言层面对HTTP调用已经有了很好的封装，但仍然要注意避免连接泄漏&lt;/li&gt;
+&lt;li&gt;微服务系统间调用更适合的方式是效率更高的RPC调用&lt;/li&gt;
+&lt;/ul&gt;</description>
+		</item>
+		
+		<item>
+			<title>Consul原理浅谈</title>
+			<link>https://blog.ni2x.com/blog/consul/</link>
+			<pubDate>Thu, 18 Apr 2019 00:00:00 UTC</pubDate>
+			<author></author>
+			<guid>https://blog.ni2x.com/blog/consul/</guid>
+			<media:content xmlns:media="http://search.yahoo.com/mrss/" url="https://blog.ni2x.com/blog/consul/title.png" medium="image" type="image/jpg" width="100" height="100" />
+			<description>&lt;p&gt;要想了解Consul的实现原理，就得先理解Consul是用来做什么的。&lt;/p&gt;
+
+&lt;p&gt;从Consul用途出发，才能更好地理解它的原理&lt;/p&gt;
+
+&lt;!-- TOC --&gt;
+
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;#1-%E8%83%8C%E6%99%AF&#34;&gt;1. 背景&lt;/a&gt;
+
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;#11-consul%E6%8F%90%E4%BE%9B%E4%BB%80%E4%B9%88%E5%8A%9F%E8%83%BD&#34;&gt;1.1. consul提供什么功能&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#12-%E5%88%86%E5%B8%83%E5%BC%8F%E5%B8%A6%E6%9D%A5%E7%9A%84%E9%97%AE%E9%A2%98&#34;&gt;1.2. 分布式带来的问题&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#13-cap%E7%90%86%E8%AE%BA&#34;&gt;1.3. CAP理论&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#2-cousul%E5%8E%9F%E7%90%86&#34;&gt;2. Cousul原理&lt;/a&gt;
+
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;#21-%E6%9C%AF%E8%AF%AD%E8%A7%A3%E9%87%8A&#34;&gt;2.1. 术语解释&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#22-%E6%9E%B6%E6%9E%84%E5%88%86%E6%9E%90&#34;&gt;2.2. 架构分析&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#221-%E5%A4%9A%E6%95%B0%E6%8D%AE%E4%B8%AD%E5%BF%83&#34;&gt;2.2.1. 多数据中心&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#222-server--client&#34;&gt;2.2.2. Server &amp;amp;&amp;amp; Client&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#223-%E6%80%BB%E7%BB%93&#34;&gt;2.2.3. 总结&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;!-- /TOC --&gt;
+
+&lt;h1 id=&#34;1-背景&#34;&gt;1. 背景&lt;/h1&gt;
+
+&lt;h2 id=&#34;1-1-consul提供什么功能&#34;&gt;1.1. consul提供什么功能&lt;/h2&gt;
+
+&lt;p&gt;按照Consul的&lt;a href=&#34;https://www.consul.io/intro/index.html&#34;&gt;官方文档&lt;/a&gt;，它主要提供以下功能：&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;服务注册与发现&lt;/li&gt;
+&lt;li&gt;服务健康检查&lt;/li&gt;
+&lt;li&gt;KV存储&lt;/li&gt;
+&lt;li&gt;安全的服务通信（_Secure Service Communication_）&lt;/li&gt;
+&lt;li&gt;多数据中心&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;根据这个介绍，看上去consul的作用很简单：不就是一个KV形式的分布式数据库嘛。&lt;/p&gt;
+
+&lt;h2 id=&#34;1-2-分布式带来的问题&#34;&gt;1.2. 分布式带来的问题&lt;/h2&gt;
+
+&lt;p&gt;可问题就出在&amp;rdquo;分布式&amp;rdquo;这三个字上。我们都知道，分布式环境会有各种问题存在:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;通信异常&lt;/li&gt;
+&lt;li&gt;网络分区&lt;/li&gt;
+&lt;li&gt;三态（成功，失败，超时）&lt;/li&gt;
+&lt;li&gt;节点故障&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;正是由于这些问题，带来了数据的不一致性，也随之带来了解决数据一致性问题的需求。这就发展出了CAP和BASE理论。&lt;/p&gt;
+
+&lt;p&gt;而每个分布式系统都需要解决自己的一致性问题，不能每做一个系统都做一套一致性方案吧。这时候，作为中间件形式的一致性服务便出现了，这就迎来了Consul，以及Zookeeper，Etcd等的诞生&lt;/p&gt;
+
+&lt;h2 id=&#34;1-3-cap理论&#34;&gt;1.3. CAP理论&lt;/h2&gt;
+
+&lt;p&gt;说到这儿，就不得不提到大名鼎鼎CAP理论了。CAP告诉我们：&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;一致性(Consistency)&lt;/li&gt;
+&lt;li&gt;可用性(Availability)&lt;/li&gt;
+&lt;li&gt;分区容错性(Partition tolerance)&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;一个分布式系统不可能同时满足这三个基本需求，最多只能满足两项&lt;br /&gt;
+  同时，在实际运用中，网络问题又是一个必定会出现的异常情况。因此分区容错性成为了一个必然需要面对和解决的问题&lt;br /&gt;
+  例如，Consul，Zookeeper满足了CP，而Euerka满足了AP&lt;/p&gt;
+
+&lt;p&gt;到这里，我们可以总结一下了:&lt;br /&gt;
+&lt;strong&gt;Consul是一个分布式的数据中心，能做到数据一致性的保证。&lt;/strong&gt;&lt;br /&gt;
+现在你明白为什么Consul可以用来做服务注册和服务发现了吧：&lt;strong&gt;如果没有一个一致性的保证机制，可能会出现一个服务注册后其他服务无法感知，或者发现了一个已经注销的服务的情况&lt;/strong&gt;&lt;/p&gt;
+
+&lt;h1 id=&#34;2-cousul原理&#34;&gt;2. Cousul原理&lt;/h1&gt;
+
+&lt;p&gt;现在我们可以来理解一下consul的实现原理了&lt;/p&gt;
+
+&lt;h2 id=&#34;2-1-术语解释&#34;&gt;2.1. 术语解释&lt;/h2&gt;
+
+&lt;p&gt;首先我们来了解一下关键术语：&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Agent&lt;/strong&gt;——agent是一直运行在Consul集群中每个成员上的守护进程。通过运行 consul agent 来启动。agent可以运行在client或者server模式。指定节点作为client或者server是非常简单的，除非有其他agent实例。所有的agent都能运行DNS或者HTTP接口，并负责运行时检查和保持服务同步。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Client&lt;/strong&gt;——一个Client是一个转发所有RPC到server的代理。这个client是相对无状态的。client唯一执行的后台活动是加入LAN gossip池。这有一个最低的资源开销并且仅消耗少量的网络带宽。在每个数据中心内，可能包含可以高达上千个的Consul client。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Server&lt;/strong&gt;——一个server是一个有一组扩展功能的代理，这些功能包括参与Raft选举，维护集群状态，响应RPC查询，与其他数据中心交互WAN gossip和转发查询给leader或者远程数据中心。一个数据中心集群中，一般包含3个或5个（官方推荐）的Consul sever。会选举出一个leader，而其他的server叫作follower&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;DataCenter&lt;/strong&gt;——虽然数据中心的定义是显而易见的，但是有一些细微的细节必须考虑。例如，在EC2中，多个可用区域被认为组成一个数据中心？我们定义数据中心为一个私有的，低延迟和高带宽的一个网络环境。这不包括访问公共网络，但是对于我们而言，同一个EC2中的多个可用区域可以被认为是一个数据中心的一部分。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Consensus&lt;/strong&gt;——在我们的文档中，我们使用Consensus来表明就leader选举和事务的顺序达成一致。由于这些事务都被应用到有限状态机上，Consensus暗示复制状态机的一致性。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Gossip&lt;/strong&gt;——Consul建立在Serf的基础之上，它提供了一个用于多播目的的完整的gossip协议。Serf提供成员关系，故障检测和事件广播。更多的信息在gossip文档中描述。这足以知道gossip使用基于UDP的随机的点到点通信。&lt;/li&gt;
+
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;RPC&lt;/strong&gt;——远程过程调用。这是一个允许client请求server的请求/响应机制。&lt;/p&gt;&lt;/li&gt;
+
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;LAN Gossip&lt;/strong&gt;——它包含所有位于同一个局域网或者数据中心的所有节点。&lt;/p&gt;&lt;/li&gt;
+
+&lt;li&gt;&lt;p&gt;&lt;strong&gt;WAN Gossip&lt;/strong&gt;——它只包含Server。这些server主要分布在不同的数据中心并且通常通过因特网或者广域网通信。&lt;/p&gt;&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;2-2-架构分析&#34;&gt;2.2. 架构分析&lt;/h2&gt;
+
+&lt;p&gt;然后，我们可以看看Consul官方提供的架构图了&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&#34;consul1.png&#34; alt=&#34;&#34; /&gt;&lt;/p&gt;
+
+&lt;h3 id=&#34;2-2-1-多数据中心&#34;&gt;2.2.1. 多数据中心&lt;/h3&gt;
+
+&lt;p&gt;可以看到Consul可以有多个数据中心，多个数据中心构成Consul集群。数据中心间通过WAN GOSSIP在Internet上交互报文。由此我们得出了第一个重要的点：&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Consul多个数据中心之间基于WAN来做同步&lt;/strong&gt;&lt;/p&gt;
+
+&lt;h3 id=&#34;2-2-2-server-client&#34;&gt;2.2.2. Server &amp;amp;&amp;amp; Client&lt;/h3&gt;
+
+&lt;p&gt;下面我们通过观察使用Consul作服务注册的流程，来了解在一个数据中心中，server和client具体的角色：&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&#34;consul2.jpg&#34; alt=&#34;&#34; /&gt;&lt;/p&gt;
+
+&lt;p&gt;（图片转自&lt;a href=&#34;http://developer.51cto.com/art/201812/589424.htm）&#34;&gt;http://developer.51cto.com/art/201812/589424.htm）&lt;/a&gt;&lt;/p&gt;
+
+&lt;p&gt;在单个数据中心中，Consul 分为 Client 和 Server 两种节点（所有的节点也被称为 Agent）。可以看到，各个业务服务进行服务注册时，直接接触的只有Consul Client。Client再将数据转发给Server-Follwer，最后统一交由Server-Leader处理。&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;简单来说就是：Server 节点保存数据，Client 负责健康检查及转发数据请求到 Server。&lt;/strong&gt;&lt;/p&gt;
+
+&lt;p&gt;server和client之间，还有一条LAN GOSSIP通信，这是用于当LAN内部发生了拓扑变化时，存活的节点们能够及时感知，比如server节点down掉后，client就会触发将对应server节点从可用列表中剥离出去。这也就是第二个重要的点：&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;集群内的 Consul 节点通过 gossip 协议（流言协议）维护成员关系&lt;/strong&gt;&lt;/p&gt;
+
+&lt;p&gt;server与server之间，client与client之间，client与server之间，在同一个datacenter中的所有consul agent会组成一个LAN网络（当然它们之间也可以按照区域划分segment），当LAN网中有任何角色变动，或者有用户自定义的event产生的时候，其他节点就会感知到，并触发对应的预置操作。&lt;/p&gt;
+
+&lt;h3 id=&#34;2-2-3-总结&#34;&gt;2.2.3. 总结&lt;/h3&gt;
+
+&lt;p&gt;到这里可以总结一下了：&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;所有的server节点共同组成了一个集群，他们之间运行raft协议，通过共识仲裁选举出leader。&lt;/li&gt;
+&lt;li&gt;Consul client通过rpc的方式将请求转发到Consul server ，Consul server 再将请求转发到 server leader，server leader处理所有的请求，并将信息同步到其他的server中去。&lt;/li&gt;
+&lt;li&gt;所有的业务数据都通过leader写入到集群中做持久化，当有半数以上的节点存储了该数据后，server集群才会返回ACK，从而保障了数据的强一致性。&lt;/li&gt;
+&lt;li&gt;server数量大了之后，也会影响写数据的效率。所有的follower会跟随leader的脚步，保障其有最新的数据副本。&lt;/li&gt;
+&lt;li&gt;当一个数据中心的server没有leader的时候，请求会被转发到其他的数据中心的Consul server上，然后再转发到本数据中心的server leader上&lt;/li&gt;
+&lt;/ul&gt;</description>
+		</item>
+		
+		<item>
+			<title>Go语言中 Channel &amp; Panic 实现原理</title>
+			<link>https://blog.ni2x.com/blog/go/panic/</link>
+			<pubDate>Thu, 18 Apr 2019 00:00:00 UTC</pubDate>
+			<author></author>
+			<guid>https://blog.ni2x.com/blog/go/panic/</guid>
+			<media:content xmlns:media="http://search.yahoo.com/mrss/" url="https://blog.ni2x.com/blog/go/go.jpeg" medium="image" type="image/jpg" width="100" height="100" />
+			<description>&lt;p&gt;Channel和Panic算是Go语言中比较重要的特性，体现了Go语言的设计思想。这也让Channel和Panic的原理成为面试中常见的问题之一&lt;/p&gt;
+
+&lt;!-- TOC --&gt;
+
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;#1-channel&#34;&gt;1. Channel&lt;/a&gt;
+
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;#11-channel%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86&#34;&gt;1.1. channel实现原理&lt;/a&gt;
+
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;#111-chan%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84&#34;&gt;1.1.1. chan数据结构&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#112-%E7%8E%AF%E5%BD%A2%E9%98%9F%E5%88%97&#34;&gt;1.1.2. 环形队列&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#113-%E7%AD%89%E5%BE%85%E9%98%9F%E5%88%97&#34;&gt;1.1.3. 等待队列&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#114-%E7%B1%BB%E5%9E%8B%E4%BF%A1%E6%81%AF&#34;&gt;1.1.4. 类型信息&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#115-%E9%94%81&#34;&gt;1.1.5. 锁&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#12-chan%E8%AF%BB%E5%86%99&#34;&gt;1.2. chan读写&lt;/a&gt;
+
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;#121-%E5%88%9B%E5%BB%BAchannel&#34;&gt;1.2.1. 创建channel&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#122-%E5%90%91channel%E5%86%99%E6%95%B0%E6%8D%AE&#34;&gt;1.2.2. 向channel写数据&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#123-%E4%BB%8Echannel%E8%AF%BB%E6%95%B0%E6%8D%AE&#34;&gt;1.2.3. 从channel读数据&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#124-%E5%85%B3%E9%97%ADchannel&#34;&gt;1.2.4. 关闭channel&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;&lt;/li&gt;
+&lt;/ul&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#2-panic&#34;&gt;2. panic&lt;/a&gt;
+
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&#34;#21-%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84&#34;&gt;2.1. 数据结构&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#22-%E5%B4%A9%E6%BA%83&#34;&gt;2.2. 崩溃&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#23-%E6%81%A2%E5%A4%8D&#34;&gt;2.3. 恢复&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&#34;#24-%E6%80%BB%E7%BB%93&#34;&gt;2.4. 总结&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;!-- /TOC --&gt;
+
+&lt;h1 id=&#34;1-channel&#34;&gt;1. Channel&lt;/h1&gt;
+
+&lt;h2 id=&#34;1-1-channel实现原理&#34;&gt;1.1. channel实现原理&lt;/h2&gt;
+
+&lt;h3 id=&#34;1-1-1-chan数据结构&#34;&gt;1.1.1. chan数据结构&lt;/h3&gt;
+
+&lt;p&gt;&lt;code&gt;src/runtime/chan.go:hchan&lt;/code&gt;定义了channel的数据结构：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-go&#34;&gt;type hchan struct {
+    qcount   uint           // 当前队列中剩余元素个数
+    dataqsiz uint           // 环形队列长度，即可以存放的元素个数
+    buf      unsafe.Pointer // 环形队列指针
+    elemsize uint16         // 每个元素的大小
+    closed   uint32         // 标识关闭状态
+    elemtype *_type         // 元素类型
+    sendx    uint           // 队列下标，指示元素写入时存放到队列中的位置
+    recvx    uint           // 队列下标，指示元素从队列的该位置读出
+    recvq    waitq          // 等待读消息的goroutine队列
+    sendq    waitq          // 等待写消息的goroutine队列
+    lock     mutex          // 互斥锁，chan不允许并发读写
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;从数据结构可以看出channel由队列、类型信息、goroutine等待队列组成，下面分别说明其原理。&lt;/p&gt;
+
+&lt;h3 id=&#34;1-1-2-环形队列&#34;&gt;1.1.2. 环形队列&lt;/h3&gt;
+
+&lt;p&gt;chan内部实现了一个环形队列作为其缓冲区，队列的长度是创建chan时指定的。&lt;/p&gt;
+
+&lt;p&gt;下图展示了一个可缓存6个元素的channel示意图：&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&#34;https://oscimg.oschina.net/oscnet/f1ae952fd1c62186d4bd0eb3fa1610db67a.jpg&#34; alt=&#34;&#34; /&gt;&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;dataqsiz指示了队列长度为6，即可缓存6个元素；&lt;/li&gt;
+&lt;li&gt;buf指向队列的内存，队列中还剩余两个元素；&lt;/li&gt;
+&lt;li&gt;qcount表示队列中还有两个元素；&lt;/li&gt;
+&lt;li&gt;sendx指示后续写入的数据存储的位置，取值[0, 6)；&lt;/li&gt;
+&lt;li&gt;recvx指示从该位置读取数据, 取值[0, 6)；&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h3 id=&#34;1-1-3-等待队列&#34;&gt;1.1.3. 等待队列&lt;/h3&gt;
+
+&lt;p&gt;从channel读数据，如果channel缓冲区为空或者没有缓冲区，当前goroutine会被阻塞。&lt;br /&gt;
+向channel写数据，如果channel缓冲区已满或者没有缓冲区，当前goroutine会被阻塞。&lt;/p&gt;
+
+&lt;p&gt;被阻塞的goroutine将会挂在channel的等待队列中：&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;因读阻塞的goroutine会被向channel写入数据的goroutine唤醒；&lt;/li&gt;
+&lt;li&gt;因写阻塞的goroutine会被从channel读数据的goroutine唤醒；&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;下图展示了一个没有缓冲区的channel，有几个goroutine阻塞等待读数据：&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&#34;https://oscimg.oschina.net/oscnet/51d91ed6fb42117d5035cab82b283bf0b07.jpg&#34; alt=&#34;&#34; /&gt;&lt;/p&gt;
+
+&lt;p&gt;注意，一般情况下recvq和sendq至少有一个为空。只有一个例外，那就是同一个goroutine使用select语句向channel一边写数据，一边读数据。&lt;/p&gt;
+
+&lt;h3 id=&#34;1-1-4-类型信息&#34;&gt;1.1.4. 类型信息&lt;/h3&gt;
+
+&lt;p&gt;一个channel只能传递一种类型的值，类型信息存储在hchan数据结构中。&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;elemtype代表类型，用于数据传递过程中的赋值；&lt;/li&gt;
+&lt;li&gt;elemsize代表类型大小，用于在buf中定位元素位置。&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h3 id=&#34;1-1-5-锁&#34;&gt;1.1.5. 锁&lt;/h3&gt;
+
+&lt;p&gt;一个channel同时仅允许被一个goroutine读写，为简单起见，本章后续部分说明读写过程时不再涉及加锁和解锁。&lt;/p&gt;
+
+&lt;h2 id=&#34;1-2-chan读写&#34;&gt;1.2. chan读写&lt;/h2&gt;
+
+&lt;h3 id=&#34;1-2-1-创建channel&#34;&gt;1.2.1. 创建channel&lt;/h3&gt;
+
+&lt;p&gt;创建channel的过程实际上是初始化hchan结构。其中类型信息和缓冲区长度由make语句传入，buf的大小则与元素大小和缓冲区长度共同决定。&lt;/p&gt;
+
+&lt;p&gt;创建channel的伪代码如下所示：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;func 
+makechan
+(t *chantype, size 
+int
+)
+ *hchan 
+{
+    var c *hchan
+    c = 
+new
+(hchan)
+    c.buf = 
+malloc
+(元素类型大小*size)
+    c.elemsize = 元素类型大小
+    c.elemtype = 元素类型
+    c.dataqsiz = size
+
+
+return
+ c
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;h3 id=&#34;1-2-2-向channel写数据&#34;&gt;1.2.2. 向channel写数据&lt;/h3&gt;
+
+&lt;p&gt;向一个channel中写数据简单过程如下：&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;如果等待接收队列recvq不为空，说明缓冲区中没有数据或者没有缓冲区，此时直接从recvq取出G,并把数据写入，最后把该G唤醒，结束发送过程；&lt;/li&gt;
+&lt;li&gt;如果缓冲区中有空余位置，将数据写入缓冲区，结束发送过程；&lt;/li&gt;
+&lt;li&gt;如果缓冲区中没有空余位置，将待发送数据写入G，将当前G加入sendq，进入睡眠，等待被读goroutine唤醒；&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;简单流程图如下：&lt;br /&gt;
+&lt;img src=&#34;https://oscimg.oschina.net/oscnet/c4ba40130182bf4264ad458a2f05863bef1.jpg&#34; alt=&#34;&#34; /&gt;&lt;/p&gt;
+
+&lt;h3 id=&#34;1-2-3-从channel读数据&#34;&gt;1.2.3. 从channel读数据&lt;/h3&gt;
+
+&lt;p&gt;从一个channel读数据简单过程如下：&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;如果等待发送队列sendq不为空，且没有缓冲区，直接从sendq中取出G，把G中数据读出，最后把G唤醒，结束读取过程；&lt;/li&gt;
+&lt;li&gt;如果等待发送队列sendq不为空，此时说明缓冲区已满，从缓冲区中首部读出数据，把G中数据写入缓冲区尾部，把G唤醒，结束读取过程；&lt;/li&gt;
+&lt;li&gt;如果缓冲区中有数据，则从缓冲区取出数据，结束读取过程；&lt;/li&gt;
+&lt;li&gt;将当前goroutine加入recvq，进入睡眠，等待被写goroutine唤醒；&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;简单流程图如下：&lt;br /&gt;
+&lt;img src=&#34;https://oscimg.oschina.net/oscnet/820d765ece5100b753e5e6c53bff08b7c2d.jpg&#34; alt=&#34;&#34; /&gt;&lt;/p&gt;
+
+&lt;h3 id=&#34;1-2-4-关闭channel&#34;&gt;1.2.4. 关闭channel&lt;/h3&gt;
+
+&lt;p&gt;关闭channel时会把recvq中的G全部唤醒，本该写入G的数据位置为nil。把sendq中的G全部唤醒，但这些G会panic。&lt;/p&gt;
+
+&lt;p&gt;除此之外，panic出现的常见场景还有：&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;关闭值为nil的channel&lt;/li&gt;
+&lt;li&gt;关闭已经被关闭的channel&lt;/li&gt;
+&lt;li&gt;向已经关闭的channel写数据&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;h1 id=&#34;2-panic&#34;&gt;2. panic&lt;/h1&gt;
+
+&lt;p&gt;&lt;code&gt;panic&lt;/code&gt;和&lt;code&gt;recover&lt;/code&gt;关键字会在&lt;a href=&#34;https://link.juejin.im/?target=https%3A%2F%2Fdraveness.me%2Fgolang-compile-intro&#34;&gt;编译期间&lt;/a&gt;被 Go 语言的编译器转换成&lt;code&gt;OPANIC&lt;/code&gt;和&lt;code&gt;ORECOVER&lt;/code&gt;类型的节点并进一步转换成&lt;code&gt;gopanic&lt;/code&gt;和&lt;code&gt;gorecover&lt;/code&gt;两个运行时的函数调用。&lt;/p&gt;
+
+&lt;h2 id=&#34;2-1-数据结构&#34;&gt;2.1. 数据结构&lt;/h2&gt;
+
+&lt;p&gt;&lt;code&gt;panic&lt;/code&gt;在 Golang 中其实是由一个数据结构表示的，每当我们调用一次&lt;code&gt;panic&lt;/code&gt;函数都会创建一个如下所示的数据结构存储相关的信息：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;type _panic struct {
+	argp      unsafe.Pointer
+	arg       interface{}
+	link      *_panic
+	recovered bool
+	aborted   bool
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;argp 是指向 defer 调用时参数的指针；&lt;/p&gt;
+
+&lt;p&gt;arg 是调用 panic 时传入的参数；&lt;/p&gt;
+
+&lt;p&gt;link 指向了更早调用的 _panic 结构；&lt;/p&gt;
+
+&lt;p&gt;recovered 表示当前 _panic 是否被 recover 恢复；&lt;/p&gt;
+
+&lt;p&gt;aborted 表示当前的 panic 是否被强行终止；&lt;/p&gt;
+
+&lt;p&gt;从数据结构中的&lt;code&gt;link&lt;/code&gt;字段我们就可以推测出以下的结论 —&lt;code&gt;panic&lt;/code&gt;函数可以被连续多次调用，它们之间通过&lt;code&gt;link&lt;/code&gt;的关联形成一个链表。&lt;/p&gt;
+
+&lt;h2 id=&#34;2-2-崩溃&#34;&gt;2.2. 崩溃&lt;/h2&gt;
+
+&lt;p&gt;首先了解一下没有被&lt;code&gt;recover&lt;/code&gt;的&lt;code&gt;panic&lt;/code&gt;函数是如何终止整个程序的，我们来看一下&lt;code&gt;gopanic&lt;/code&gt;函数的实现&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-go&#34;&gt;func gopanic(e interface{}) {
+	gp := getg()
+	// ...
+	var p _panic
+	p.arg = e
+	p.link = gp._panic
+	gp._panic = (*_panic)(noescape(unsafe.Pointer(&amp;amp;p)))
+
+	for {
+		d := gp._defer
+		if d == nil {
+			break
+		}
+
+		d._panic = (*_panic)(noescape(unsafe.Pointer(&amp;amp;p)))
+
+		p.argp = unsafe.Pointer(getargp(0))
+		reflectcall(nil, unsafe.Pointer(d.fn), deferArgs(d), uint32(d.siz), uint32(d.siz))
+		p.argp = nil
+
+		d._panic = nil
+		d.fn = nil
+		gp._defer = d.link
+
+		pc := d.pc
+		sp := unsafe.Pointer(d.sp)
+		freedefer(d)
+		if p.recovered {
+			// ...
+		}
+	}
+
+	fatalpanic(gp._panic)
+	*(*int)(nil) = 0
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;我们暂时省略了 recover 相关的代码，省略后的 gopanic 函数执行过程包含以下几个步骤：&lt;/p&gt;
+
+&lt;p&gt;获取当前 panic 调用所在的 Goroutine 协程；&lt;/p&gt;
+
+&lt;p&gt;创建并初始化一个 _panic 结构体；&lt;/p&gt;
+
+&lt;p&gt;从当前 Goroutine 中的链表获取一个 _defer 结构体；&lt;/p&gt;
+
+&lt;p&gt;如果当前 _defer 存在，调用 reflectcall 执行 _defer 中的代码；&lt;/p&gt;
+
+&lt;p&gt;将下一位的 _defer 结构设置到 Goroutine 上并回到 3；&lt;/p&gt;
+
+&lt;p&gt;调用 fatalpanic 中止整个程序；&lt;/p&gt;
+
+&lt;p&gt;fatalpanic 函数在中止整个程序之前可能就会通过 printpanics 打印出全部的 panic 消息以及调用时传入的参数：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-go&#34;&gt;func fatalpanic(msgs *_panic) {
+	pc := getcallerpc()
+	sp := getcallersp()
+	gp := getg()
+	var docrash bool
+	systemstack(func() {
+		if startpanic_m(); &amp;amp; &amp;amp;msgs != nil {
+			atomic.Xadd(&amp;amp;runningPanicDefers, -1)
+
+			printpanics(msgs)
+		}
+		docrash = dopanic_m(gp, pc, sp)
+	})
+
+	if docrash {
+		crash()
+	}
+
+	systemstack(func() {
+		exit(2)
+	})
+
+	*(*int)(nil) = 0 // not reached
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;在&lt;code&gt;fatalpanic&lt;/code&gt;函数的最后会通过&lt;code&gt;exit&lt;/code&gt;退出当前程序并返回错误码&lt;code&gt;2&lt;/code&gt;，不同的操作系统其实对&lt;code&gt;exit&lt;/code&gt;函数有着不同的实现，其实最终都执行了&lt;code&gt;exit&lt;/code&gt;系统调用来退出程序。&lt;/p&gt;
+
+&lt;h2 id=&#34;2-3-恢复&#34;&gt;2.3. 恢复&lt;/h2&gt;
+
+&lt;p&gt;到了这里我们已经掌握了&lt;code&gt;panic&lt;/code&gt;退出程序的过程，但是一个&lt;code&gt;panic&lt;/code&gt;的程序也可能会被&lt;code&gt;defer&lt;/code&gt;中的关键字&lt;code&gt;recover&lt;/code&gt;恢复，在这时我们就回到&lt;code&gt;recover&lt;/code&gt;关键字对应函数&lt;code&gt;gorecover&lt;/code&gt;的实现了：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-go&#34;&gt;func gorecover(argp uintptr) interface{} {
+	p := gp._panic
+	if p != nil &amp;amp;&amp;amp; !p.recovered &amp;amp;&amp;amp; argp == uintptr(p.argp) {
+		p.recovered = true
+		return p.arg
+	}
+	return nil
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;这个函数的实现其实非常简单，它其实就是会修改&lt;code&gt;panic&lt;/code&gt;结构体的&lt;code&gt;recovered&lt;/code&gt;字段，当前函数的调用其实都发生在&lt;code&gt;gopanic&lt;/code&gt;期间，我们重新回顾一下这段方法的实现：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-go&#34;&gt;func gopanic(e interface{}) {
+	// ...
+
+	for {
+		// reflectcall
+
+		pc := d.pc
+		sp := unsafe.Pointer(d.sp)
+
+		// ...
+		if p.recovered {
+			gp._panic = p.link
+			for gp._panic != nil &amp;amp;&amp;amp; gp._panic.aborted {
+				gp._panic = gp._panic.link
+			}
+			if gp._panic == nil {
+				gp.sig = 0
+			}
+			gp.sigcode0 = uintptr(sp)
+			gp.sigcode1 = pc
+			mcall(recovery)
+			throw(&amp;quot;recovery failed&amp;quot;)
+		}
+	}
+
+	fatalpanic(gp._panic)
+	*(*int)(nil) = 0
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;上述这段代码其实从&lt;code&gt;_defer&lt;/code&gt;结构体中取出了程序计数器&lt;code&gt;pc&lt;/code&gt;和栈指针&lt;code&gt;sp&lt;/code&gt;并调用&lt;code&gt;recovery&lt;/code&gt;方法进行调度，调度之前会准备好&lt;code&gt;sp&lt;/code&gt;、&lt;code&gt;pc&lt;/code&gt;以及函数的返回值：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&#34;language-go&#34;&gt;func recovery(gp *g) {
+	sp := gp.sigcode0
+	pc := gp.sigcode1
+
+	gp.sched.sp = sp
+	gp.sched.pc = pc
+	gp.sched.lr = 0
+	gp.sched.ret = 1
+	gogo(&amp;amp;gp.sched)
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;在&lt;a href=&#34;https://link.juejin.im/?target=https%3A%2F%2Fdraveness.me%2Fgolang-defer&#34;&gt;defer&lt;/a&gt;一节中我们曾经介绍过&lt;code&gt;deferproc&lt;/code&gt;的实现，作为创建并初始化&lt;code&gt;_defer&lt;/code&gt;结构体的函数，它会将&lt;code&gt;deferproc&lt;/code&gt;函数开始位置对应的栈指针&lt;code&gt;sp&lt;/code&gt;和程序计数器&lt;code&gt;pc&lt;/code&gt;存储到&lt;code&gt;_defer&lt;/code&gt;结构体中，这里的&lt;code&gt;gogo&lt;/code&gt;函数其实就会跳回&lt;code&gt;deferproc&lt;/code&gt;：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;TEXT runtime·gogo(SB), NOSPLIT, $8-4
+	MOVL	buf+0(FP), BX		// gobuf
+	MOVL	gobuf_g(BX), DX
+	MOVL	0(DX), CX		// make sure g != nil
+	get_tls(CX)
+	MOVL	DX, g(CX)
+	MOVL	gobuf_sp(BX), SP	// restore SP
+	MOVL	gobuf_ret(BX), AX
+	MOVL	gobuf_ctxt(BX), DX
+	MOVL	$0, gobuf_sp(BX)	// clear to help garbage collector
+	MOVL	$0, gobuf_ret(BX)
+	MOVL	$0, gobuf_ctxt(BX)
+	MOVL	gobuf_pc(BX), BX
+	JMP	BX
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;这里的调度其实会将&lt;code&gt;deferproc&lt;/code&gt;函数的返回值设置成&lt;code&gt;1&lt;/code&gt;，在这时编译器生成的代码就会帮助我们直接跳转到调用方函数&lt;code&gt;return&lt;/code&gt;之前并进入&lt;code&gt;deferreturn&lt;/code&gt;的执行过程，我们可以从&lt;code&gt;deferproc&lt;/code&gt;的注释中简单了解这一过程：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;func deferproc(siz int32, fn *funcval) {
+	// ...
+
+	// deferproc returns 0 normally.
+	// a deferred func that stops a panic
+	// makes the deferproc return 1.
+	// the code the compiler generates always
+	// checks the return value and jumps to the
+	// end of the function if deferproc returns != 0.
+	return0()
+	// No code can go here - the C return register has
+	// been set and must not be clobbered.
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;跳转到&lt;code&gt;deferreturn&lt;/code&gt;函数之后，程序其实就从&lt;code&gt;panic&lt;/code&gt;的过程中跳出来恢复了正常的执行逻辑，而&lt;code&gt;gorecover&lt;/code&gt;函数也从&lt;code&gt;_panic&lt;/code&gt;结构体中取出了调用&lt;code&gt;panic&lt;/code&gt;时传入的&lt;code&gt;arg&lt;/code&gt;参数。&lt;/p&gt;
+
+&lt;h2 id=&#34;2-4-总结&#34;&gt;2.4. 总结&lt;/h2&gt;
+
+&lt;p&gt;Go 语言中 panic 和 recover 的实现其实与 defer 关键字的联系非常紧密，而分析程序的恐慌和恢复过程也比较棘手，不是特别容易理解。在文章的最后我们还是简单总结一下具体的实现原理：&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;在编译过程中会将 panic 和 recover 分别转换成 gopanic 和 gorecover函数，同时将 defer 转换成 deferproc 函数并在调用 defer 的函数和方法末尾增加 deferreturn 的指令；&lt;/li&gt;
+&lt;li&gt;在运行过程中遇到 gopanic 方法时，会从当前 Goroutine 中取出 _defer 的链表并通过 reflectcall 调用用于收尾的函数；&lt;/li&gt;
+&lt;li&gt;如果在 reflectcall 调用时遇到了 gorecover 就会直接将当前的 _panic.recovered 标记成 true 并返回 panic 传入的参数（在这时 recover 就能够获取到 panic 的信息）；&lt;/li&gt;
+&lt;li&gt;在这次调用结束之后，gopanic 会从 _defer 结构体中取出程序计数器 pc 和栈指针 sp 并调用 recovery 方法进行恢复；&lt;/li&gt;
+&lt;li&gt;recovery 会根据传入的 pc 和 sp 跳转到 deferproc 函数；&lt;/li&gt;
+&lt;li&gt;编译器自动生成的代码会发现 deferproc 的返回值不为 0，这时就会直接跳到 deferreturn 函数中并恢复到正常的控制流程（依次执行剩余的 defer 并正常退出）；&lt;/li&gt;
+&lt;li&gt;如果没有遇到 gorecover 就会依次遍历所有的 _defer 结构，并在最后调用 fatalpanic 中止程序、打印 panic 参数并返回错误码 2；&lt;/li&gt;
+&lt;li&gt;整个过程涉及了一些 Go 语言底层相关的知识并且发生了非常多的跳转，相关的源代码也不是特别的直接，阅读起来也比较晦涩，不过还是对我们理解 Go 语言的错误处理机制有着比较大的帮助。&lt;/li&gt;
+&lt;/ul&gt;</description>
+		</item>
+		
+		<item>
+			<title>字符串匹配KMP算法(转)</title>
+			<link>https://blog.ni2x.com/blog/kmp/</link>
+			<pubDate>Tue, 16 Apr 2019 00:00:00 UTC</pubDate>
+			<author></author>
+			<guid>https://blog.ni2x.com/blog/kmp/</guid>
+			<media:content xmlns:media="http://search.yahoo.com/mrss/" url="https://blog.ni2x.com/blog/kmp/title.jpeg" medium="image" type="image/jpg" width="100" height="100" />
+			<description>&lt;p&gt;有些算法，适合从它产生的动机，如何设计与解决问题这样正向地去介绍。但KMP算法真的不适合这样去学。最好的办法是先搞清楚它所用的数据结构是什么，再搞清楚怎么用，最后为什么的问题就会有恍然大悟的感觉&lt;/p&gt;
+
+&lt;p&gt;我试着从这个思路再介绍一下。大家只需要记住一点，PMT是什么东西。然后自己临时推这个算法也是能推出来的，完全不需要死记硬背。KMP算法的核心，是一个被称为部分匹配表(Partial Match Table)的数组。我觉得理解KMP的最大障碍就是很多人在看了很多关于KMP的文章之后，仍然搞不懂PMT中的值代表了什么意思。这里我们抛开所有的枝枝蔓蔓，先来解释一下这个数据到底是什么。对于字符串“abababca”，它的PMT如下表所示：&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&#34;kmp1.jpg&#34; alt=&#34;图片1&#34; /&gt;&lt;/p&gt;
+
+&lt;p&gt;就像例子中所示的，如果待匹配的模式字符串有8个字符，那么PMT就会有8个值。&lt;/p&gt;
+
+&lt;p&gt;我先解释一下字符串的前缀和后缀。如果字符串A和B，存在A=BS，其中S是任意的非空字符串，那就称B为A的前缀。例如，”Harry”的前缀包括{”H”, ”Ha”, ”Har”, ”Harr”}，我们把所有前缀组成的集合，称为字符串的前缀集合。同样可以定义后缀A=SB， 其中S是任意的非空字符串，那就称B为A的后缀，例如，”Potter”的后缀包括{”otter”, ”tter”, ”ter”, ”er”, ”r”}，然后把所有后缀组成的集合，称为字符串的后缀集合。要注意的是，字符串本身并不是自己的后缀。&lt;/p&gt;
+
+&lt;p&gt;有了这个定义，就可以说明PMT中的值的意义了。&lt;strong&gt;PMT中的值是字符串的前缀集合与后缀集合的交集中最长元素的长度&lt;/strong&gt;。例如，对于”aba”，它的前缀集合为{”a”, ”ab”}，后缀 集合为{”ba”, ”a”}。两个集合的交集为{”a”}，那么长度最长的元素就是字符串”a”了，长 度为1，所以对于”aba”而言，它在PMT表中对应的值就是1。再比如，对于字符串”ababa”，它的前缀集合为{”a”, ”ab”, ”aba”, ”abab”}，它的后缀集合为{”baba”, ”aba”, ”ba”, ”a”}， 两个集合的交集为{”a”, ”aba”}，其中最长的元素为”aba”，长度为3。&lt;/p&gt;
+
+&lt;p&gt;好了，解释清楚这个表是什么之后，我们再来看如何使用这个表来加速字符串的查找，以及这样用的道理是什么。如图 1.12 所示，要在主字符串&amp;rdquo;ababababca&amp;rdquo;中查找模式字符串&amp;rdquo;abababca&amp;rdquo;。如果在 j 处字符不匹配，那么由于前边所说的模式字符串 PMT 的性质，主字符串中 i 指针之前的 PMT[j −1] 位就一定与模式字符串的第 0 位至第 PMT[j−1] 位是相同的。这是因为主字符串在 i 位失配，也就意味着主字符串从 i−j 到 i 这一段是与模式字符串的 0 到 j 这一段是完全相同的。而我们上面也解释了，模式字符串从 0 到 j−1 ，在这个例子中就是”ababab”，其前缀集合与后缀集合的交集的最长元素为”abab”， 长度为4。所以就可以断言，主字符串中i指针之前的 4 位一定与模式字符串的第0位至第 4 位是相同的，即长度为 4 的后缀与前缀相同。这样一来，我们就可以将这些字符段的比较省略掉。具体的做法是，保持i指针不动，然后将j指针指向模式字符串的PMT[j −1]位即可。&lt;/p&gt;
+
+&lt;p&gt;简言之，以图中的例子来说，在 i 处失配，那么主字符串和模式字符串的前边6位就是相同的。又因为模式字符串的前6位，它的前4位前缀和后4位后缀是相同的，所以我们推知主字符串i之前的4位和模式字符串开头的4位是相同的。就是图中的灰色部分。那这部分就不用再比较了。&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&#34;kmp2.jpg&#34; alt=&#34;&#34; /&gt;&lt;/p&gt;
+
+&lt;p&gt;有了上面的思路，我们就可以使用PMT加速字符串的查找了。我们看到如果是在 j 位 失配，那么影响 j 指针回溯的位置的其实是第 j −1 位的 PMT 值，所以为了编程的方便， 我们不直接使用PMT数组，而是将PMT数组向后偏移一位。我们把新得到的这个数组称为next数组。下面给出根据next数组进行字符串匹配加速的字符串匹配程序。其中要注意的一个技巧是，在把PMT进行向右偏移时，第0位的值，我们将其设成了-1，这只是为了编程的方便，并没有其他的意义。在本节的例子中，next数组如下表所示。&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&#34;kmp3.jpg&#34; alt=&#34;&#34; /&gt;&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;
+int KMP(char * t, char * p) 
+{
+	int i = 0; 
+	int j = 0;
+ 
+	while (i &amp;lt; strlen(t) &amp;amp;&amp;amp; j &amp;lt; strlen(p))
+	{
+		if (j == -1 || t[i] == p[j]) 
+		{
+			i++;
+           		j++;
+		}
+	 	else 
+           		j = next[j];
+  }
+ 
+    if (j == strlen(p))
+       return i - j;
+    else 
+       return -1;
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;好了，讲到这里，其实KMP算法的主体就已经讲解完了。你会发现，其实KMP算法的动机是很简单的，解决的方案也很简单。远没有很多教材和算法书里所讲的那么乱七八糟，只要搞明白了PMT的意义，其实整个算法都迎刃而解。&lt;/p&gt;
+
+&lt;p&gt;现在，我们再看一下如何编程快速求得next数组。其实，求next数组的过程完全可以看成字符串匹配的过程，即以模式字符串为主字符串，以模式字符串的前缀为目标字符串，一旦字符串匹配成功，那么当前的next值就是匹配成功的字符串的长度。&lt;/p&gt;
+
+&lt;p&gt;具体来说，就是从模式字符串的第一位(注意，不包括第0位)开始对自身进行匹配运算。 在任一位置，能匹配的最长长度就是当前位置的next值。如下图所示。&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&#34;kmp4.jpg&#34; alt=&#34;&#34; /&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&#34;kmp5.jpg&#34; alt=&#34;&#34; /&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&#34;kmp6.jpg&#34; alt=&#34;&#34; /&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&#34;kmp7.jpg&#34; alt=&#34;&#34; /&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&#34;kmp8.jpg&#34; alt=&#34;&#34; /&gt;&lt;/p&gt;
+
+&lt;p&gt;求next数组值的程序如下所示：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;
+void getNext(char * p, int * next)
+{
+	next[0] = -1;
+	int i = 0, j = -1;
+ 
+	while (i &amp;lt; strlen(p))
+	{
+		if (j == -1 || p[i] == p[j])
+		{
+			++i;
+			++j;
+			next[i] = j;
+		}	
+		else
+			j = next[j];
+	}
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&amp;nbsp;
+&amp;nbsp;
+&lt;/br&gt;作者：海纳
+&lt;/br&gt;链接：&lt;a href=&#34;https://www.zhihu.com/question/21923021/answer/281346746&#34;&gt;https://www.zhihu.com/question/21923021/answer/281346746&lt;/a&gt;
+&lt;/br&gt;来源：知乎&lt;/p&gt;</description>
+		</item>
+		
+		<item>
+			<title>《从Paxos到zookeeper分布式一致性原理与实践》学习笔记</title>
+			<link>https://blog.ni2x.com/blog/paxos_to_zookeeper/paxos_to_zookeeper/</link>
+			<pubDate>Sat, 30 Mar 2019 00:00:00 UTC</pubDate>
+			<author></author>
+			<guid>https://blog.ni2x.com/blog/paxos_to_zookeeper/paxos_to_zookeeper/</guid>
+			<media:content xmlns:media="http://search.yahoo.com/mrss/" url="https://blog.ni2x.com/blog/paxos_to_zookeeper/bitcoin.jpeg" medium="image" type="image/jpg" width="100" height="100" />
+			<description>&lt;p&gt;阅读《从Paxos到zookeeper》的一些笔记记录.&lt;/p&gt;
+
+&lt;p&gt;虽然主要是讲Zookeeper使用的，但前几章对分布式体系和历史的介绍很赞&lt;/p&gt;
+
+&lt;h1 id=&#34;第一章-分布式架构&#34;&gt;第一章：分布式架构&lt;/h1&gt;
+
+&lt;ul&gt;
+&lt;li&gt;ACID:事务需要满足的原子性，一致性，隔离性，持久性&lt;/li&gt;
+&lt;li&gt;分布式事务的CAP和BASE理论&lt;/li&gt;
+&lt;li&gt;CAP:  一致性，可用性，分区容错性，只能同时满足两个。但针对分布式系统，P是必须满足的，所以实在C和A之间寻找平衡&lt;/li&gt;
+&lt;li&gt;BASE:是基本可用，软状态，最终一致性的简写。&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h1 id=&#34;第二章-一致性协议&#34;&gt;第二章: 一致性协议&lt;/h1&gt;
+
+&lt;ul&gt;
+&lt;li&gt;2PC（两阶段提交）和3PC（三阶段提交），Paxos:都是为了解决分布式系统一致性的问题&lt;/li&gt;
+&lt;li&gt;当一个事务操作需要跨越多个分布式节点的时候，为了保持事物的ACID特性，就需要引入一个称为协调者（coordinator）的组件来统一调度所有的分布式节点的执行逻辑。这些被调度的分布式节点则被称为参与者（Participant）&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h3 id=&#34;2pc&#34;&gt;2PC：&lt;/h3&gt;
+
+&lt;p&gt;阶段一：提交事务请求&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;事务询问&lt;/li&gt;
+&lt;li&gt;执行事务，并将uodo和redo信息记入事务日志中&lt;/li&gt;
+&lt;li&gt;各参与者向协调者反馈1的相应&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;阶段二：执行事务提交&lt;/p&gt;
+
+&lt;p&gt;如果所有参与者都是yes&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;发送提交请求&lt;/li&gt;
+&lt;li&gt;参与者执行提交&lt;/li&gt;
+&lt;li&gt;反馈提交结果&lt;/li&gt;
+&lt;li&gt;完成事务&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;如果一个参与者反馈no，或者等待超时无反馈，进行中断&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;发送回滚请求&lt;/li&gt;
+&lt;li&gt;事务回滚&lt;/li&gt;
+&lt;li&gt;反馈事务回滚结果&lt;/li&gt;
+&lt;li&gt;中断事务&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;2PC优点：&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;强一致性&lt;/li&gt;
+&lt;li&gt;原理简单，实现方便&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;2PC缺点：&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;同步阻塞&lt;/li&gt;
+&lt;li&gt;协调者出现问题，整个系统停滞&lt;/li&gt;
+&lt;li&gt;异常时会有数据不一致&lt;/li&gt;
+&lt;li&gt;总的来说，没有容错机制，任意一个节点失败都会导致整个事务失败&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;h3 id=&#34;3pc&#34;&gt;3PC：&lt;/h3&gt;
+
+&lt;p&gt;三阶段提交将”提交事务请求“过程一分为二，形成了由CanCommit,PreCommit, doCommit三个阶段组成的事务处理协议&lt;/p&gt;
+
+&lt;p&gt;阶段一：CanCommit&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;事务询问&lt;/li&gt;
+&lt;li&gt;各参与者向协调者反馈事务询问的相应&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;阶段二：PreCommit&lt;/p&gt;
+
+&lt;p&gt;当所有都为yes&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;发送预提交请求（PreCommit）,进入Prepared&lt;/li&gt;
+&lt;li&gt;参与者接收到预提交后，执行事务操作，并将uodo和redo记录到日志&lt;/li&gt;
+&lt;li&gt;参与者向协调者反馈执行相应ack，等待最终指令&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;当没有收到所有yes时&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;协调者向所有参与者发送abort&lt;/li&gt;
+&lt;li&gt;中断事务&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;阶段三：doCommit&lt;/p&gt;
+
+&lt;p&gt;两种情况&lt;/p&gt;
+
+&lt;p&gt;执行提交：&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;如果协调者接收到所有参与者的ack，它将从”预提交“转换到”提交“，向所有的参与者发送doCommit&lt;/li&gt;
+&lt;li&gt;事务提交&lt;/li&gt;
+&lt;li&gt;参与者完成提交后，向协调者发送ack&lt;/li&gt;
+&lt;li&gt;协调者收到所有ack后，完成事务&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;中断事务：&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;协调者向所有参与者发送abort请求&lt;/li&gt;
+&lt;li&gt;参与者利用undo信息执行回滚操作&lt;/li&gt;
+&lt;li&gt;反馈事务回滚结果，向协调者发送ack&lt;/li&gt;
+&lt;li&gt;中断事务&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;在阶段三，如果协调者出现问题或者协调者与参与者网络出现问题，无法收到abort请求，参与者都会在等待超时后，继续进行事务提交&lt;/p&gt;
+
+&lt;p&gt;3PC优点：降低阻塞范围，在单点故障后继续达成一致&lt;/p&gt;
+
+&lt;p&gt;缺点:在参与者收到preCommit消息后，如果网络出现分区，协调-参与之间通信异常，参与者继续进行事务操作，带来数据不一致。&lt;/p&gt;
+
+&lt;h4 id=&#34;paxos算法&#34;&gt;Paxos算法&lt;/h4&gt;
+
+&lt;p&gt;拜占庭将军问题： 在异步系统和不可靠通道上来达到一致性状态是不可能的。所以在对一致性的研究过程中，都假设信道可靠。&lt;/p&gt;
+
+&lt;p&gt;Paxos算法的前提也是，消息可能有不可预知的延迟，重复，或丢失，但不会被篡改&lt;/p&gt;
+
+&lt;p&gt;Paxos的目标是：不论发生任何异常，保证最终有一个提案会被选定，进程也最终能获取到被选定的提案&lt;/p&gt;
+
+&lt;p&gt;Paxos算法的核心：过半数投票&lt;/p&gt;
+
+&lt;p&gt;角色：Proposer， Acceptor,  Learner&lt;/p&gt;
+
+&lt;h4 id=&#34;推导过程&#34;&gt;推导过程：&lt;/h4&gt;
+
+&lt;p&gt;最终有一个提案被选定，当只有一个提案时也能选定-&amp;gt;&lt;/p&gt;
+
+&lt;p&gt;推导一： p1 :一个Acceptor必须批准它收到的第一个提案&lt;/p&gt;
+
+&lt;p&gt;推导二：一个Acceptor必须能够批准不止一个提案&lt;/p&gt;
+
+&lt;p&gt;推导三：当一个具有Value值的提案被半数以上的Acceptor批准后，我们认为该Value被&lt;strong&gt;选定&lt;/strong&gt;了，此时我们也认为该提案被&lt;strong&gt;选定&lt;/strong&gt;了&lt;/p&gt;
+
+&lt;p&gt;由三可推导出-&amp;gt;&lt;/p&gt;
+
+&lt;p&gt;推导四：允许多个提案被选定,但所有被选定的提案都用相同的value&lt;/p&gt;
+
+&lt;p&gt;推导-&amp;gt;p2&lt;/p&gt;
+
+&lt;p&gt;如果编号M0，value为V0的提案被选定了，那么所有比编号M0高的，且被选定的提案，其Value的值也必须是V0&lt;/p&gt;
+
+&lt;p&gt;想要满足p2，可以通过满足p2a来实现：&lt;/p&gt;
+
+&lt;p&gt;p2a:&lt;/p&gt;
+
+&lt;p&gt;如果编号M0，value为V0的提案被选定了，那么所有比编号M0高的，且被Acceptor批准的提案，其Value的值也必须是V0&lt;/p&gt;
+
+&lt;p&gt;由于：一个提案可能会某个Acceptor未收到任何提案时就被选定，而当它收到一个编号更高的提案，并且必须通过（p1）时，就会与p2a矛盾，所以，必须对p2a进行强化：&lt;/p&gt;
+
+&lt;p&gt;p2b: 如果一个提案[M0,V0]被选定后，那之后的任何Proposer产生的编号更高的提案(Mn&amp;gt;M0)，其value都为v0&lt;/p&gt;
+
+&lt;p&gt;所以，只要论证p2b成立即可&lt;/p&gt;
+
+&lt;p&gt;证明p2b过程（第二数学归纳法）：&lt;/p&gt;
+
+&lt;p&gt;证明p2b，可以通过证明以下结论满足：&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;假设&lt;/strong&gt;编号在M0到Mn-1之间的提案，其value都是V0,   &lt;strong&gt;证明&lt;/strong&gt;编号Mn的提案value也是v0&lt;/p&gt;
+
+&lt;p&gt;因为M0已经被选定了，意味着肯定存在一个由半数以上的Acceptor组成的集合C，C中的每个Acceptor都批准了该提案。&lt;/p&gt;
+
+&lt;p&gt;再结合假设，得知：&lt;/p&gt;
+
+&lt;p&gt;C中的每个Acceptor都批准了一个编号在M0到M1范围内的提案，并且每个编号在M0到Mn-1范围内的，被Acceptor批准的提案，其值都为V0&lt;/p&gt;
+
+&lt;p&gt;因为任何包含半数以上Acceptor的集合S都至少包含C中的一个成员，因此我们可以认为如果保持了下面p2c的不变性，那么编号Mn的提案的value也为V0&lt;/p&gt;
+
+&lt;p&gt;p2c: 对于任意的Mn和Vn，如果提案[Mn,Vn]被提出，那么肯定存在一个由半数以上的Acceptor组成的集合S，满足以下两个条件中的任意一个：&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;S中不存在任何批准过编号小于Mn提案的Acceptor&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h4 id=&#34;算法陈述&#34;&gt;算法陈述&lt;/h4&gt;
+
+&lt;p&gt;阶段一：&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;Proposer选择一个提案编号Mn，然后向Acceptor的某个超过半数的子集成员发送编号为Mn的prepare请求&lt;/li&gt;
+&lt;li&gt;如果一个Acceptor收到一个编号为Mn的Prepare请求。且编号Mn大于该Acceptor已经响应的所有Prepare请求的编号，那么它就会将它已经批准过的最大编号的提案作为响应反馈给Proposer，同时该Acceptor会承诺不会再批准任何编号小于Mn的提案&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;阶段二：&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;如果Proposer收到来自半数以上的Acceptor对于其发出的编号为Mn的Prepare请求的响应，那么它就会发送一个针对[Mn,Vn]提案的Accept请求给Acceptor。注意，Vn就是收到的响应中编号最大的提案的值，如果响应中不包含任何提案，那么它就是任意值。&lt;/li&gt;
+&lt;li&gt;如果Acceptor收到这个针对[Mn,Vn]提案的Accept请求，只要该Acceptor尚未对编号大于Mn的Prepare请求做出响应，它就可以通过这个提案&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;h4 id=&#34;提案的获取&#34;&gt;提案的获取&lt;/h4&gt;
+
+&lt;p&gt;Learner获取一个已经被选定的提案的前提是，该提案已经被半数以上的Acceptor批准。让所有的Acceptor将它们对提案的批准情况，统一发送给一个特定的Learner（为避免单点故障，可以优化为一个集群)。Learner之间通过消息通信相互告知。&lt;/p&gt;
+
+&lt;h4 id=&#34;选取主proposer保证算法活性&#34;&gt;选取主Proposer保证算法活性&lt;/h4&gt;
+
+&lt;p&gt;为了避免极端情况的”死循环“，必须选择一个主Proposer，规定只有主Proposer才能提出提案，这样只要主Proposer能够和半数以上的Acceptor通信，主Proposer提出一个编号更高的提案，就会被批准&lt;/p&gt;
+
+&lt;p&gt;&lt;em&gt;&lt;strong&gt;（这段没看明白。如果是通用做法，那主Proposer是怎样和其他Proposer交换信息的？还是只是面对一些极端情况下的舍车保帅做法？）&lt;/strong&gt;&lt;/em&gt;&lt;/p&gt;
+
+&lt;h1 id=&#34;第三章-paxos的工程实践&#34;&gt;第三章: Paxos的工程实践&lt;/h1&gt;
+
+&lt;h3 id=&#34;chubby&#34;&gt;Chubby&lt;/h3&gt;
+
+&lt;p&gt;chubby是一个面向松耦合分布式系统的锁服务。在众多应用场景中，最为典型的就是集群中服务器的Master选举&lt;/p&gt;
+
+&lt;p&gt;一个典型的Chubby集群，通常有5台服务器组成。这些副本服务器采用Paxos协议，通过投票的方式来选举产生一个获得过半投票的服务器作为Master。&lt;strong&gt;chubby的所有工作，不管是写还是读，都是由master节点来完成。其他所有节点只做备份。客户端请求chubby时，通过DNS来找到master&lt;/strong&gt;&lt;/p&gt;
+
+&lt;h4 id=&#34;paxos协议实现&#34;&gt;Paxos协议实现&lt;/h4&gt;
+
+&lt;p&gt;集群中的每个服务器都维护着一份服务端数据库的副本，Master才能进行写操作，其他都是使用Paxos从master进行同步更新&lt;/p&gt;
+
+&lt;p&gt;#个人理解：&lt;/p&gt;
+
+&lt;p&gt;这儿的同步和mysql的主从同步不同。&lt;/p&gt;
+
+&lt;h5 id=&#34;mysql&#34;&gt;mysql：&lt;/h5&gt;
+
+&lt;p&gt;从库生成两个线程，一个I/O线程，一个SQL线程；&lt;/p&gt;
+
+&lt;p&gt;i/o线程去请求主库 的binlog，并将得到的binlog日志写到relay log（中继日志） 文件中；&lt;/p&gt;
+
+&lt;p&gt;主库会生成一个 log dump 线程，用来给从库 i/o线程传binlog；&lt;/p&gt;
+
+&lt;p&gt;SQL 线程，会读取relay log文件中的日志，并解析成具体操作，来实现主从的操作一致，而最终数据一致；&lt;/p&gt;
+
+&lt;h5 id=&#34;chubby-1&#34;&gt;chubby&lt;/h5&gt;
+
+&lt;p&gt;采用paxos来实现同步。master进行”Promise-&amp;gt;Accept“阶段，写入本地日志，然后广播COMMIT消息给其他副本节点，并写入日志。如果其他副本没有收到COMMIT,则询问其他副本进行查询。&lt;/p&gt;
+
+&lt;p&gt;集群中的某台机器在宕机重启后，为了恢复状态机的状态，最简单的方法就是将已经记录的所有事务日志重新执行一遍&lt;/p&gt;
+
+&lt;p&gt;为了提高整个集群的性能，一小部分事务日志也可以通过从其他正常运行的副本上复制来进行获取，因此不需要实时地进行事务日志的flush&lt;/p&gt;</description>
+		</item>
 		
 		<item>
 			<title>网易公开课《博弈论》笔记</title>
-			<link>https://devil-maycry.github.io/blog/gametheroy/</link>
+			<link>https://blog.ni2x.com/blog/game_theory/</link>
 			<pubDate>Sat, 30 Mar 2019 00:00:00 UTC</pubDate>
 			<author></author>
-			<guid>https://devil-maycry.github.io/blog/gametheroy/</guid>
-			<media:content xmlns:media="http://search.yahoo.com/mrss/" url="https://devil-maycry.github.io/img/gametheroy.jpg" medium="image" type="image/jpg" width="100" height="100" />
+			<guid>https://blog.ni2x.com/blog/game_theory/</guid>
+			<media:content xmlns:media="http://search.yahoo.com/mrss/" url="https://blog.ni2x.com/blog/game_theory/game_theory.jpg" medium="image" type="image/jpg" width="100" height="100" />
 			<description>&lt;p&gt;网易公开课《博弈论》（耶鲁）的一些笔记记录.&lt;/p&gt;
 
 &lt;h2 id=&#34;第一讲&#34;&gt;第一讲:&lt;/h2&gt;
@@ -120,19 +1944,158 @@
 &lt;li&gt;突变如果面对正常收益很低，或者同类收益很低，都会导致灭绝&lt;/li&gt;
 &lt;/ul&gt;
 
-&lt;p&gt;(未完待续)&lt;/p&gt;</description>
+&lt;h2 id=&#34;第十二讲&#34;&gt;第十二讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;在一个被定义为纯粹混合纳什均衡里， 混合策略里的各个策略收益都是一样的&lt;/li&gt;
+&lt;li&gt;自然界中，如果赢得一场争斗的获利要比代价大，那么在争斗中就会产生进化稳定。如果争斗的获利要比代价小，就会出现混合策略&lt;/li&gt;
+&lt;li&gt;博弈论并不是根据事实来反推公式，而是根据公式预测事实&lt;/li&gt;
+&lt;li&gt;物种之间可能会根据混合策略来互相牵制&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第十三讲&#34;&gt;第十三讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;贯序博弈：参与人2在决定前，知道参与人1采取了什么样的策略 。而且参与人1明白这个状况&lt;/li&gt;
+&lt;li&gt;道德风险会降低博弈双方的收益&lt;/li&gt;
+&lt;li&gt;担保是承诺策略的一种，能降低道德风险，提高双方博弈收益。&lt;/li&gt;
+&lt;li&gt;在贯序博弈中，有时候放弃部分选择权可能使收益扩大&lt;/li&gt;
+&lt;li&gt;逆向归纳法：根据树形图决策节点反推&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第十四讲&#34;&gt;第十四讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;在双寡头贯序博弈中，不再是古诺模型，而是先决策方有优势（先行得利模式），获得更多产量和更多利润。但需要沉没陈本做出承诺&lt;/li&gt;
+&lt;li&gt;有时候，太多信息可能会害了你（商业间谍）&lt;/li&gt;
+&lt;li&gt;并不是所有博弈都是先行得利的&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第十五讲&#34;&gt;第十五讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;策梅洛定理：
+在一个双人游戏中，满足：&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;blockquote&gt;
+&lt;ol&gt;
+&lt;li&gt;双人轮流行动&lt;/li&gt;
+&lt;li&gt;有限步。比如国际象棋好像重复出现三次相同的棋局判和&lt;/li&gt;
+&lt;li&gt;信息完备。所谓信息完备，大概是玩家明确知道所有之前的步骤。&lt;/li&gt;
+&lt;li&gt;仅有3种结局，对于玩家1只有：赢，和，输三种结局&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;当满足上述条件的游戏，只会出现下面情况之一：
+&amp;gt;1. 玩家1有必胜招。就是玩家1按照某种特定的走法，不论玩家2如何努力，玩家1都可以赢
+2. 玩家1有必和招。
+3. 玩家2有必胜招。&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;完全信息博弈：每一轮的每个参与者，都知道自己在整个博弈的哪个节点&lt;/li&gt;
+&lt;li&gt;如果只是机械地寻找博弈中的纳什均衡，可能会出现一些很荒谬的决策&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第十六讲&#34;&gt;第十六讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;理性的人偶尔会去装作不理性吓退对手，这就是“连锁店效应”&lt;/li&gt;
+&lt;li&gt;人质谈判：绝不向绑架者妥协，建立声望&lt;/li&gt;
+&lt;li&gt;决斗：当到了双方成功几率和大于1的点时，接下来的任何一方都应该开枪了。而大多数情况，大家都开枪太早。有时候，等待是个好策略&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第十七讲&#34;&gt;第十七讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;逆向归纳不一定管用，因为有时候人们会关系收益之外的事，比如公平&lt;/li&gt;
+&lt;li&gt;轮流提议的议价过程。如果次数可以是无限的，并且折损很小或者没有，并且双方折旧因素相同（耐心是一样的） ，那么双方收益往往是一致的。所以通过逆向归纳，理论上可以一次成交&lt;/li&gt;
+&lt;li&gt;如果双方耐心不同，耐心较多的一方收益更大。&lt;/li&gt;
+&lt;li&gt;现实生活中，双方折旧因素是未知的，而且真实的利润也是未知的 ，所以往往无法一次成交，而是需要多次议价&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第十八讲&#34;&gt;第十八讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;信息集合：是一系列信息人i无法识别的节点&lt;/li&gt;
+&lt;li&gt;完美信息：树图上所有节点都是单节点（没有信息集合）&lt;/li&gt;
+&lt;li&gt;非完美信息下的策略：告诉参与者，在每个信息集合下应该怎么做。&lt;/li&gt;
+&lt;li&gt;子博弈：一个博弈的一部分，树图中的一部分。它有三个特点：1.它必须从某个单节点开始。2.它包含该节点的所有后代节点 3.它不能破坏任何信息集合&lt;/li&gt;
+&lt;li&gt;如果一个纳什均衡，在任一子博弈中都能达到纳什均衡，称为子博弈精炼均衡&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第十九讲&#34;&gt;第十九讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;子博弈精炼均衡与逆向归纳法的结果一致&lt;/li&gt;
+&lt;li&gt;先分析子博弈，求出子博弈纳什均衡。再从子博弈出发，回过头做决定&lt;/li&gt;
+&lt;li&gt;经济学和会计学的答案的差异，是以为经济学考虑到了战略决策的影响&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第二十讲&#34;&gt;第二十讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;沉没成本：已经失去了的，就不用再考虑了。每次都是重新博弈。&lt;/li&gt;
+&lt;li&gt;消耗战，贿赂竞赛会带来大量的沉没成本。就算是理性的参与者也会深陷消耗战&lt;/li&gt;
+&lt;li&gt;消耗战中，在每个阶段都有继续打下去的可能，但概率是逐渐降低的&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第二十一讲&#34;&gt;第二十一讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;持续合作&lt;/li&gt;
+&lt;li&gt;在一个长期关系中，对将来奖励的承诺，和对未来惩罚的威胁，可能会鼓励现在人们的好行为。&lt;/li&gt;
+&lt;li&gt;囚徒困境的教训： 要有一个明确的未来，这样会为现在的行动提供激励&lt;/li&gt;
+&lt;li&gt;连任失败效应：失去对未来的激励&lt;/li&gt;
+&lt;li&gt;如果一个阶段博弈有1不止一个纳什均衡，我们可以通过预测不同策略的结果，来为下一次行动提供激励&lt;/li&gt;
+&lt;li&gt;恐怖扣扳机策略：如果一个博弈我们不知道它什么时候会结束，大家都会采取合作，直到第一个背叛产生&lt;/li&gt;
+&lt;li&gt;平衡：如果背叛的诱惑 &amp;lt; 合作的奖励-背叛的惩罚&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第二十二讲&#34;&gt;第二十二讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;通过扣扳机策略，能在囚徒困境中促成合作，而这也是一个子博弈精炼均衡（在折旧率较大时）&lt;/li&gt;
+&lt;li&gt;要想让一段持续的关系能够促成今日的善行，如果这段关系有较大的概率持续下去，促成善行也能够办到&lt;/li&gt;
+&lt;li&gt;关系持续的概率就是你对未来的加权&lt;/li&gt;
+&lt;li&gt;扳机策略由于会因为一小点欺骗就带来合作的崩溃，显得太苛刻。惩罚策略相比就显得温和一些&lt;/li&gt;
+&lt;li&gt;惩罚策略：如果上回合是（C，C）或者（D，D）则选择合作，如果是（C，D），（D，C）则选择背叛&lt;/li&gt;
+&lt;li&gt;如果你希望惩罚措施别太严厉，但又要维持合作关系，但此时未来的加权要更大&lt;/li&gt;
+&lt;li&gt;如果希望持续关系中今天能促成善行，那么对明天必须有一定奖赏。如果你对明天的加权或者维持关系的概率较低，奖赏就要更丰富。&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第二十三讲&#34;&gt;第二十三讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;不传达信息行为（掩盖）这本身也是一种信息&lt;/li&gt;
+&lt;li&gt;读取更高的学历其实是提高了&amp;rdquo;好雇员&amp;amp;坏雇员&amp;rdquo;的区分度，提高成本，达到均衡&lt;/li&gt;
+&lt;li&gt;一个成功的信号，要能区分开不同的人。并不一定要高成本，但一定要通过成本区分不同的人&lt;/li&gt;
+&lt;li&gt;如果成本降低，人们就会通过其他手段找回成本差别（学位膨胀）&lt;/li&gt;
+&lt;li&gt;如果想让教育作为分离手段（达到平衡），总有孩子必须会被落在后面&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第二十四讲&#34;&gt;第二十四讲:&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;赢家的诅咒：拍卖中的赢家是与真实价值相差最大的&lt;/li&gt;
+&lt;li&gt;出价时的相关价值就是：基于我一开始的估值，并且这个估值比其他人的估值大时，我认为它的真实价值。也就是说，你的出价应该考虑的是你赢的情况。因为如果你不能赢，你的出价是没有意义的。&lt;/li&gt;
+&lt;li&gt;在第二价格类型拍卖中，出价刚好等于价值是弱优势策略&lt;/li&gt;
+&lt;li&gt;各种拍卖方式，在机会均等的原则下，收益期望都是一样的&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;（完）&lt;/p&gt;</description>
 		</item>
 		
 		<item>
 			<title>《黑天鹅》</title>
-			<link>https://devil-maycry.github.io/blog/blackswan/</link>
+			<link>https://blog.ni2x.com/blog/black_swan/</link>
 			<pubDate>Wed, 22 Aug 2018 00:00:00 UTC</pubDate>
 			<author></author>
-			<guid>https://devil-maycry.github.io/blog/blackswan/</guid>
-			<media:content xmlns:media="http://search.yahoo.com/mrss/" url="https://devil-maycry.github.io/img/blackswan.jpeg" medium="image" type="image/jpg" width="100" height="100" />
+			<guid>https://blog.ni2x.com/blog/black_swan/</guid>
+			<media:content xmlns:media="http://search.yahoo.com/mrss/" url="https://blog.ni2x.com/blog/black_swan/black_swan.jpeg" medium="image" type="image/jpg" width="100" height="100" />
 			<description>&lt;p&gt;《黑天鹅》试图告诉我们: 世界是极端的.&lt;/p&gt;
 
-&lt;h2 id=&#34;序言&#34;&gt;序言&lt;/h2&gt;
+&lt;h1 id=&#34;序言&#34;&gt;序言&lt;/h1&gt;
 
 &lt;ul&gt;
 &lt;li&gt;能预测的事往往无足轻重，黑天鹅才是推动世界发展的力量&lt;/li&gt;
@@ -140,6 +2103,8 @@
 &lt;li&gt;未知，不可能等词不是错误，而是表达了知识的局限性&lt;/li&gt;
 &lt;li&gt;过度举例：任何寻求证实的人都能够找到足够的证据来欺骗自己以及他身边的人&lt;/li&gt;
 &lt;/ul&gt;
+
+&lt;h1 id=&#34;第一部分&#34;&gt;第一部分&lt;/h1&gt;
 
 &lt;h2 id=&#34;第一章&#34;&gt;第一章&lt;/h2&gt;
 
@@ -162,19 +2127,91 @@
 
 &lt;ul&gt;
 &lt;li&gt;火鸡问题&lt;/li&gt;
-&lt;li&gt;人类容易错误地把对过去的一次天真的观察当做某种确定的东西&lt;/li&gt;
+&lt;li&gt;证实谬误：人类容易错误地把对过去的一次天真的观察当做某种确定的东西&lt;/li&gt;
 &lt;li&gt;黑天鹅是相对的，对一方的黑天鹅，对另一方可能不是&lt;/li&gt;
 &lt;li&gt;正面的黑天鹅可能是相对漫长的积累，而负面的黑天鹅往往迅速&lt;/li&gt;
 &lt;li&gt;黑天鹅思想并不是极端怀疑主义&lt;/li&gt;
 &lt;/ul&gt;
 
-&lt;h2 id=&#34;第五章&#34;&gt;第五章&lt;/h2&gt;
+&lt;h2 id=&#34;第六章&#34;&gt;第六章&lt;/h2&gt;
 
 &lt;ul&gt;
-&lt;li&gt;负面例子比正面例子更能接近真想。我们知道什么观点一定是错的，但不一定知道什么观点是正确的&lt;/li&gt;
+&lt;li&gt;负面例子比正面例子更能接近真相。我们知道什么观点一定是错的，但不一定知道什么观点是正确的&lt;/li&gt;
+&lt;li&gt;柯尔莫哥洛夫复杂性原理：我们十分渴望求规律，因为我们需要把事物简化，好让它们进入我们的头脑。信息越具随机性，事物就越复杂，因而越难以概括。你越概括，随机性就越低，使我们以为世界的随机性比实际上小。&lt;/li&gt;
+&lt;li&gt;我们会更容易记住那些符合某种叙述的过去事实，忽略那些看上去在该叙述中不扮演因果关系角色的部分。我们可能在记忆中对整个事件进行重新整合。记忆更多是一台自动进行动态更新的机器，每次回忆就根据我们觉得有道理的逻辑重新改写一次故事。&lt;/li&gt;
+&lt;li&gt;新闻媒体总是根据新闻找原因，好让你接受这个新闻。&lt;/li&gt;
+&lt;li&gt;叙述谬误及其突出情感事实的特点会扰乱我们对时间概率的预测。&lt;/li&gt;
+&lt;li&gt;叙述中的黑天鹅现象，即那些现在被人们谈到的并且可能从电视上听到的黑天鹅现象，人们往往会高估它的概率。而无人提及或者羞于提及的黑天鹅现象，因为它们不符合任何模式，看上去不合理，往往会被人们低估概率。&lt;/li&gt;
+&lt;li&gt;不可重复事件发生之前是被忽略的，发生之后则被过度估计。&lt;/li&gt;
+&lt;li&gt;我们判断的错误有时候来自于，我们以为动用了理性，其实还是来自于感性&lt;/li&gt;
+&lt;li&gt;避免叙述谬误的方式就是：强调实验而非讲故事，强调体验而非历史，强调客观知识而非理论。另一种方法是：预测并记录预测的结果。&lt;/li&gt;
 &lt;/ul&gt;
 
-&lt;p&gt;(未完待续)&lt;/p&gt;</description>
+&lt;h2 id=&#34;第七章&#34;&gt;第七章&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;世界上有两种人，有的人像火鸡，面临巨大的灾难却不知情；有的人正好相反，他们等待着让别人大吃一惊的黑天鹅事件发生。&lt;/li&gt;
+&lt;li&gt;智力，科学和艺术行为属于极端斯坦，在这里成功是高度集中的，少量赢者得到蛋糕的一部分。&lt;/li&gt;
+&lt;li&gt;现实生活中，我们很少获得令人满意的，线性的正面发展。你可能花一年时间思考一个问题，却什么收获都没有。然而，只要你不对这种徒劳无功的状况感到失望而放弃，某种成果就会突然冒出来。线性进展是柏拉图化的观点，并非常规实现。&lt;/li&gt;
+&lt;li&gt;黑天鹅事件的等待者经常因为努力而感到或者被迫感到羞耻。参与这种赌博的人获得了另一种非物质的回报：希望。&lt;/li&gt;
+&lt;li&gt;大量的一般好的消息给人的感觉往往比一个非常好的消息更令人感到幸福。而痛苦却相反&lt;/li&gt;
+&lt;li&gt;如果从事一个依赖于黑天鹅事件的职业，加入一个群体是更好的选择。&lt;/li&gt;
+&lt;li&gt;有些人会采取激进的投资策略。承担持续的少量的损失，等待黑天鹅事件发生换取巨额的利润。&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第八章&#34;&gt;第八章&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;沉默的证据&amp;ndash;幸存者偏差&lt;/li&gt;
+&lt;li&gt;我们是寻找原因的动物，习惯于认为一切事情都是有确定的原因，并且把最明显的那个当做最终解释。但实际上可能并没有可见的原因&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第九章&#34;&gt;第九章&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;赌场看上去很随机，其实是完全基于概率的，属于平均斯坦。而真实世界你是不知道概率的，“可计算的风险”在生活中是不存在的。这就是“游戏谬误”&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第一部分总结&#34;&gt;第一部分总结&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;我们看不见黑天鹅现象的原因：我们为已经发生的事担忧，而不是那些可能发生实际上没有发生的事。没有发生的黑天鹅太抽象了，而我们喜欢具体的事物&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h1 id=&#34;第二部分&#34;&gt;第二部分&lt;/h1&gt;
+
+&lt;h2 id=&#34;第十章&#34;&gt;第十章&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;我们在自以为拥有的知识方面非常自大。我们知道的当然很多，但我们有一种内在的倾向，以为我们比实际上知道的多一点，正是这一点会不时招致麻烦。&lt;/li&gt;
+&lt;li&gt;意外不只是被低估，人们也会高估非正常事件或某些特定的非正常事件。&lt;/li&gt;
+&lt;li&gt;日常经营的琐碎知识可能是无用的，甚至是有害的。消火栓实验中，信息越多，就会形成更多假设，结论就越糟。他们看到了更多的随机噪点，当成了信息&lt;/li&gt;
+&lt;li&gt;如果你要证明没有专家，你需要找到一个专家无用的领域。比如证券经纪商，情报分析师等等。因变化而需要知识的事务，是没有专家的。也就是说，与未来有关，并且研究是基于不可重复过去的行业，通常是没有专家的&lt;/li&gt;
+&lt;li&gt;我们把成功归为原因，把失败归因于在我们控制之外的事物，比如随机性。&lt;/li&gt;
+&lt;li&gt;高度复杂的模型的预测可能还不如最简单的猜想，博弈论的实践能力可能还不如普通的大学生&lt;/li&gt;
+&lt;li&gt;我们制定计划时，对风险有天然的忽略性，导致往往不能按时完成&lt;/li&gt;
+&lt;li&gt;可测随机性：对于人类的计划或者冒险活动，你等待的时间越长，你预期还要继续等待的时间就越长。比如你是等待回家的难民，每过去一天，你离回去的那一天就越远，而不是越近。&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第十一章&#34;&gt;第十一章&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;为了预测历史事件，你需要预测技术创新，而它从根本上是不可预测的&lt;/li&gt;
+&lt;li&gt;越远的预测，受细节影响会越来越大，导致偏差会越来越大&lt;/li&gt;
+&lt;li&gt;预测物理系统和预测社会是不一样的，人会有自由意志&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;第十二章&#34;&gt;第十二章&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;认知斯坦：对自己的知识持怀疑态度，念念不忘人类认识错误的境界&lt;/li&gt;
+&lt;li&gt;过去和过去的过去之间的关系，并不能反映过去和未来的关系。否则我们就能“预测”了&lt;/li&gt;
+&lt;li&gt;我们在总体上高估了不幸事件的影响持续的时间。你之前以为灾难性的，但更可能的情况是，你能适应任何事情，正如你面对过去的不幸时所作的那样。&lt;/li&gt;
+&lt;li&gt;我们的问题不仅在于我们不知道未来，还在于我们不知道过去。正向过程可能存在于物理，工程学中，反向过程通常在于不可重复，不可实验的历史过程中。就好比，你知道蝴蝶效应可能导致飓风，但你不可能去因此关注所有的蝴蝶，这是没有意义的&lt;/li&gt;
+&lt;li&gt;真正的随机，不等于确定性混沌。后者虽然负责，理论上确实可预测的&lt;/li&gt;
+&lt;li&gt;学会阅读历史，吸取所有可能的知识，但不要随意建立任何因果链条，保持怀疑精神。
+(未完待续)&lt;/li&gt;
+&lt;/ul&gt;</description>
 		</item>
 		
 	</channel>
