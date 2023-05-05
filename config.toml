@@ -12,8 +12,8 @@ DefaultContentLanguageInSubdir = true
     weight = 1
     languageName = "English"
     [languages.en.params]
-      introTitle = "Hey! I'm Enix"
-      introSubtitle = "30 y/o developer who enjoys classical music, video games and reading :）"
+      introTitle = "Hey!  I'm Enix"
+      introSubtitle = "30 y/o Developer who enjoys Reading, Video Games, Beethoven :）"
       introPhoto = "/enix.png"
       logo = "/blist-logo.png"
     [[languages.en.menu.main]]

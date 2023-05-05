@@ -1,71 +1,49 @@
-<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
   xmlns:xhtml="http://www.w3.org/1999/xhtml">
-  
   <url>
-    <loc>https://blog.ni2x.com/blog/go/context/</loc>
+    <loc>devil-maycry.github.io/</loc>
+    <lastmod>2023-05-05T00:00:00+00:00</lastmod>
+  </url><url>
+    <loc>devil-maycry.github.io/blog/</loc>
     <lastmod>2019-05-16T00:00:00+00:00</lastmod>
-  </url>
-  
-  <url>
-    <loc>https://blog.ni2x.com/blog/io/</loc>
+  </url><url>
+    <loc>devil-maycry.github.io/blog/go/context/</loc>
     <lastmod>2019-05-16T00:00:00+00:00</lastmod>
-  </url>
-  
-  <url>
-    <loc>https://blog.ni2x.com/blog/keepalive/</loc>
+  </url><url>
+    <loc>devil-maycry.github.io/blog/io/</loc>
+    <lastmod>2019-05-16T00:00:00+00:00</lastmod>
+  </url><url>
+    <loc>devil-maycry.github.io/blog/keepalive/</loc>
     <lastmod>2019-05-01T00:00:00+00:00</lastmod>
-  </url>
-  
-  <url>
-    <loc>https://blog.ni2x.com/blog/consul/</loc>
+  </url><url>
+    <loc>devil-maycry.github.io/blog/consul/</loc>
     <lastmod>2019-04-18T00:00:00+00:00</lastmod>
-  </url>
-  
-  <url>
-    <loc>https://blog.ni2x.com/blog/go/panic/</loc>
+  </url><url>
+    <loc>devil-maycry.github.io/blog/go/panic/</loc>
     <lastmod>2019-04-18T00:00:00+00:00</lastmod>
-  </url>
-  
-  <url>
-    <loc>https://blog.ni2x.com/blog/kmp/</loc>
+  </url><url>
+    <loc>devil-maycry.github.io/blog/kmp/</loc>
     <lastmod>2019-04-16T00:00:00+00:00</lastmod>
-  </url>
-  
-  <url>
-    <loc>https://blog.ni2x.com/blog/paxos_to_zookeeper/paxos_to_zookeeper/</loc>
+  </url><url>
+    <loc>devil-maycry.github.io/blog/paxos_to_zookeeper/paxos_to_zookeeper/</loc>
     <lastmod>2019-03-30T00:00:00+00:00</lastmod>
-  </url>
-  
-  <url>
-    <loc>https://blog.ni2x.com/blog/game_theory/</loc>
+  </url><url>
+    <loc>devil-maycry.github.io/blog/game_theory/</loc>
     <lastmod>2019-03-30T00:00:00+00:00</lastmod>
-  </url>
-  
-  <url>
-    <loc>https://blog.ni2x.com/blog/black_swan/</loc>
+  </url><url>
+    <loc>devil-maycry.github.io/blog/black_swan/</loc>
     <lastmod>2018-08-22T00:00:00+00:00</lastmod>
+  </url><url>
+    <loc>devil-maycry.github.io/tags/markdown/</loc>
+    <lastmod>2018-08-22T00:00:00+00:00</lastmod>
+  </url><url>
+    <loc>devil-maycry.github.io/tags/</loc>
+    <lastmod>2018-08-22T00:00:00+00:00</lastmod>
+  </url><url>
+    <loc>devil-maycry.github.io/tags/text/</loc>
+    <lastmod>2018-08-22T00:00:00+00:00</lastmod>
+  </url><url>
+    <loc>devil-maycry.github.io/categories/</loc>
   </url>
-  
-  <url>
-    <loc>https://blog.ni2x.com/blog/</loc>
-    <lastmod>2019-05-16T00:00:00+00:00</lastmod>
-    <priority>0</priority>
-  </url>
-  
-  <url>
-    <loc>https://blog.ni2x.com/categories/</loc>
-    <priority>0</priority>
-  </url>
-  
-  <url>
-    <loc>https://blog.ni2x.com/tags/</loc>
-    <priority>0</priority>
-  </url>
-  
-  <url>
-    <loc>https://blog.ni2x.com/</loc>
-    <lastmod>2019-05-16T00:00:00+00:00</lastmod>
-  </url>
-  
 </urlset>
