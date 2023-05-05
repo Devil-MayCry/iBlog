@@ -2,48 +2,48 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
   xmlns:xhtml="http://www.w3.org/1999/xhtml">
   <url>
-    <loc>devil-maycry.github.io/</loc>
+    <loc>devil-maycry.github.io/iBlog/</loc>
     <lastmod>2023-05-05T00:00:00+00:00</lastmod>
   </url><url>
-    <loc>devil-maycry.github.io/blog/</loc>
+    <loc>devil-maycry.github.io/iBlog/blog/</loc>
     <lastmod>2019-05-16T00:00:00+00:00</lastmod>
   </url><url>
-    <loc>devil-maycry.github.io/blog/go/context/</loc>
+    <loc>devil-maycry.github.io/iBlog/blog/go/context/</loc>
     <lastmod>2019-05-16T00:00:00+00:00</lastmod>
   </url><url>
-    <loc>devil-maycry.github.io/blog/io/</loc>
+    <loc>devil-maycry.github.io/iBlog/blog/io/</loc>
     <lastmod>2019-05-16T00:00:00+00:00</lastmod>
   </url><url>
-    <loc>devil-maycry.github.io/blog/keepalive/</loc>
+    <loc>devil-maycry.github.io/iBlog/blog/keepalive/</loc>
     <lastmod>2019-05-01T00:00:00+00:00</lastmod>
   </url><url>
-    <loc>devil-maycry.github.io/blog/consul/</loc>
+    <loc>devil-maycry.github.io/iBlog/blog/consul/</loc>
     <lastmod>2019-04-18T00:00:00+00:00</lastmod>
   </url><url>
-    <loc>devil-maycry.github.io/blog/go/panic/</loc>
+    <loc>devil-maycry.github.io/iBlog/blog/go/panic/</loc>
     <lastmod>2019-04-18T00:00:00+00:00</lastmod>
   </url><url>
-    <loc>devil-maycry.github.io/blog/kmp/</loc>
+    <loc>devil-maycry.github.io/iBlog/blog/kmp/</loc>
     <lastmod>2019-04-16T00:00:00+00:00</lastmod>
   </url><url>
-    <loc>devil-maycry.github.io/blog/paxos_to_zookeeper/paxos_to_zookeeper/</loc>
+    <loc>devil-maycry.github.io/iBlog/blog/paxos_to_zookeeper/paxos_to_zookeeper/</loc>
     <lastmod>2019-03-30T00:00:00+00:00</lastmod>
   </url><url>
-    <loc>devil-maycry.github.io/blog/game_theory/</loc>
+    <loc>devil-maycry.github.io/iBlog/blog/game_theory/</loc>
     <lastmod>2019-03-30T00:00:00+00:00</lastmod>
   </url><url>
-    <loc>devil-maycry.github.io/blog/black_swan/</loc>
+    <loc>devil-maycry.github.io/iBlog/blog/black_swan/</loc>
     <lastmod>2018-08-22T00:00:00+00:00</lastmod>
   </url><url>
-    <loc>devil-maycry.github.io/tags/markdown/</loc>
+    <loc>devil-maycry.github.io/iBlog/tags/markdown/</loc>
     <lastmod>2018-08-22T00:00:00+00:00</lastmod>
   </url><url>
-    <loc>devil-maycry.github.io/tags/</loc>
+    <loc>devil-maycry.github.io/iBlog/tags/</loc>
     <lastmod>2018-08-22T00:00:00+00:00</lastmod>
   </url><url>
-    <loc>devil-maycry.github.io/tags/text/</loc>
+    <loc>devil-maycry.github.io/iBlog/tags/text/</loc>
     <lastmod>2018-08-22T00:00:00+00:00</lastmod>
   </url><url>
-    <loc>devil-maycry.github.io/categories/</loc>
+    <loc>devil-maycry.github.io/iBlog/categories/</loc>
   </url>
 </urlset>
