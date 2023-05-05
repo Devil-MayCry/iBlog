@@ -1,4 +1,4 @@
-baseURL = "devil-maycry.github.io"
+baseURL = "devil-maycry.github.io/iBlog"
 metaDataFormat = "yaml"
 title = "Enix的读书笔记"
 theme = "blist"
