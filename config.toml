@@ -14,7 +14,7 @@ DefaultContentLanguageInSubdir = true
     [languages.en.params]
       introTitle = "Hey!  I'm Enix"
       introSubtitle = "30 y/o Developer who enjoys Reading, Video Games, Beethoven :）"
-      introPhoto = "/enix.png"
+      introPhoto = "/iBlog/enix.png"
       logo = "/blist-logo.png"
     [[languages.en.menu.main]]
         name = "Blog"
