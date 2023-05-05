@@ -1,4 +1,4 @@
-baseURL = "devil-maycry.github.io"
+baseURL = "devil-maycry.github.io/iBlog/"
 metaDataFormat = "yaml"
 title = "Enix的读书笔记"
 theme = "blist"
@@ -14,7 +14,7 @@ DefaultContentLanguageInSubdir = true
     [languages.en.params]
       introTitle = "Hey!  I'm Enix"
       introSubtitle = "30 y/o Developer who enjoys Reading, Video Games, Beethoven :）"
-      introPhoto = "/iBlog/enix.png"
+      introPhoto = "/enix.png"
       logo = "/blist-logo.png"
     [[languages.en.menu.main]]
         name = "Blog"
