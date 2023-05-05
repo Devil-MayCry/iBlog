@@ -1,9 +1,9 @@
 ---
 title: Consul原理浅谈
-date: "2019-04-18"
+date: 2019-04-18
 description: ""
 url: /blog/consul/
-image: "/blog/consul/title.png"
+thumbnail: /blog/consul/title.png
 ---
 要想了解Consul的实现原理，就得先理解Consul是用来做什么的。
 
@@ -12,20 +12,7 @@ image: "/blog/consul/title.png"
 <!--more-->
 
 
-<!-- TOC -->
-
-- [1. 背景](#1-%E8%83%8C%E6%99%AF)
-  - [1.1. consul提供什么功能](#11-consul%E6%8F%90%E4%BE%9B%E4%BB%80%E4%B9%88%E5%8A%9F%E8%83%BD)
-  - [1.2. 分布式带来的问题](#12-%E5%88%86%E5%B8%83%E5%BC%8F%E5%B8%A6%E6%9D%A5%E7%9A%84%E9%97%AE%E9%A2%98)
-  - [1.3. CAP理论](#13-cap%E7%90%86%E8%AE%BA)
-- [2. Cousul原理](#2-cousul%E5%8E%9F%E7%90%86)
-  - [2.1. 术语解释](#21-%E6%9C%AF%E8%AF%AD%E8%A7%A3%E9%87%8A)
-  - [2.2. 架构分析](#22-%E6%9E%B6%E6%9E%84%E5%88%86%E6%9E%90)
-    - [2.2.1. 多数据中心](#221-%E5%A4%9A%E6%95%B0%E6%8D%AE%E4%B8%AD%E5%BF%83)
-    - [2.2.2. Server && Client](#222-server--client)
-    - [2.2.3. 总结](#223-%E6%80%BB%E7%BB%93)
-
-<!-- /TOC -->
+<!-- TOC -->autoauto- [1. 背景](#1-背景)auto    - [1.1. consul提供什么功能](#11-consul提供什么功能)auto    - [1.2. 分布式带来的问题](#12-分布式带来的问题)auto    - [1.3. CAP理论](#13-cap理论)auto- [2. Cousul原理](#2-cousul原理)auto    - [2.1. 术语解释](#21-术语解释)auto    - [2.2. 架构分析](#22-架构分析)auto        - [2.2.1. 多数据中心](#221-多数据中心)auto        - [2.2.2. Server && Client](#222-server--client)auto        - [2.2.3. 总结](#223-总结)autoauto<!-- /TOC -->
 
 # 1. 背景
 ## 1.1. consul提供什么功能

@@ -1,36 +1,14 @@
 ---
 title: IO - 同步，异步，阻塞，非阻塞 （转）
-date: "2019-05-16"
+date: 2019-05-16
 description: ""
 url: /blog/io/
-image: "/blog/io/title.jpg"
+thumbnail: /blog/io/title.jpg
 ---
 本文讨论的是Linux环境下的network IO，介绍同步（synchronous） IO和异步（asynchronous） IO，阻塞（blocking） IO和非阻塞（non-blocking）IO等概念
 <!--more-->
 
-<!-- TOC -->
-
-- [IO模型](#io%e6%a8%a1%e5%9e%8b)
-  - [blocking IO (BIO)](#blocking-io-bio)
-  - [non-blocking IO (NIO)](#non-blocking-io-nio)
-  - [IO multiplexing](#io-multiplexing)
-  - [Asynchronous I/O](#asynchronous-io)
-  - [IO模型总结](#io%e6%a8%a1%e5%9e%8b%e6%80%bb%e7%bb%93)
-  - [基本概念](#%e5%9f%ba%e6%9c%ac%e6%a6%82%e5%bf%b5)
-    - [用户空间 / 内核空间](#%e7%94%a8%e6%88%b7%e7%a9%ba%e9%97%b4--%e5%86%85%e6%a0%b8%e7%a9%ba%e9%97%b4)
-  - [Select](#select)
-    - [函数介绍](#%e5%87%bd%e6%95%b0%e4%bb%8b%e7%bb%8d)
-      - [参数说明](#%e5%8f%82%e6%95%b0%e8%af%b4%e6%98%8e)
-      - [返回值](#%e8%bf%94%e5%9b%9e%e5%80%bc)
-    - [select运行机制](#select%e8%bf%90%e8%a1%8c%e6%9c%ba%e5%88%b6)
-    - [select机制的问题](#select%e6%9c%ba%e5%88%b6%e7%9a%84%e9%97%ae%e9%a2%98)
-  - [Poll](#poll)
-      - [参数说明](#%e5%8f%82%e6%95%b0%e8%af%b4%e6%98%8e-1)
-      - [返回值](#%e8%bf%94%e5%9b%9e%e5%80%bc-1)
-  - [Epoll](#epoll)
-  - [异步IO总结](#%e5%bc%82%e6%ad%a5io%e6%80%bb%e7%bb%93)
-
-<!-- /TOC -->
+<!-- TOC -->autoauto- [IO模型](#io模型)auto    - [blocking IO  (BIO)](#blocking-io--bio)auto    - [non-blocking IO (NIO)](#non-blocking-io-nio)auto    - [IO multiplexing](#io-multiplexing)auto    - [Asynchronous I/O](#asynchronous-io)auto    - [IO模型总结](#io模型总结)auto- [IO多路复用](#io多路复用)auto    - [基本概念](#基本概念)auto        - [用户空间 / 内核空间](#用户空间--内核空间)auto        - [进程切换](#进程切换)auto        - [进程阻塞](#进程阻塞)auto        - [文件描述符](#文件描述符)auto        - [缓存I/O](#缓存io)auto    - [Select](#select)auto        - [函数介绍](#函数介绍)auto            - [参数说明](#参数说明)auto            - [返回值](#返回值)auto        - [select运行机制](#select运行机制)auto        - [select机制的问题](#select机制的问题)auto    - [Poll](#poll)auto            - [参数说明](#参数说明-1)auto            - [返回值](#返回值-1)auto    - [Epoll](#epoll)auto    - [异步IO总结](#异步io总结)autoauto<!-- /TOC -->
 
 常用的IO模型有五种
 - blocking IO

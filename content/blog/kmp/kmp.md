@@ -1,9 +1,9 @@
 ---
 title: 字符串匹配KMP算法(转)
-date: "2019-04-16"
+date: 2019-04-16
 description: ""
 url: /blog/kmp/
-image: "/blog/kmp/title.jpeg"
+thumbnail: /blog/kmp/title.jpeg
 ---
 有些算法，适合从它产生的动机，如何设计与解决问题这样正向地去介绍。但KMP算法真的不适合这样去学。最好的办法是先搞清楚它所用的数据结构是什么，再搞清楚怎么用，最后为什么的问题就会有恍然大悟的感觉
 <!--more-->

@@ -1,34 +1,14 @@
 ---
 title: Go语言中 Channel & Panic 实现原理
-date: "2019-04-18"
+date: 2019-04-18
 description: ""
 url: /blog/go/panic/
-image: "/blog/go/go.jpeg"
+thumbnail: /blog/go/go.jpeg
 ---
 Channel和Panic算是Go语言中比较重要的特性，体现了Go语言的设计思想。这也让Channel和Panic的原理成为面试中常见的问题之一
 
 <!--more-->
-<!-- TOC -->
-
-- [1. Channel](#1-channel)
-	- [1.1. channel实现原理](#11-channel%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86)
-		- [1.1.1. chan数据结构](#111-chan%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84)
-		- [1.1.2. 环形队列](#112-%E7%8E%AF%E5%BD%A2%E9%98%9F%E5%88%97)
-		- [1.1.3. 等待队列](#113-%E7%AD%89%E5%BE%85%E9%98%9F%E5%88%97)
-		- [1.1.4. 类型信息](#114-%E7%B1%BB%E5%9E%8B%E4%BF%A1%E6%81%AF)
-		- [1.1.5. 锁](#115-%E9%94%81)
-	- [1.2. chan读写](#12-chan%E8%AF%BB%E5%86%99)
-		- [1.2.1. 创建channel](#121-%E5%88%9B%E5%BB%BAchannel)
-		- [1.2.2. 向channel写数据](#122-%E5%90%91channel%E5%86%99%E6%95%B0%E6%8D%AE)
-		- [1.2.3. 从channel读数据](#123-%E4%BB%8Echannel%E8%AF%BB%E6%95%B0%E6%8D%AE)
-		- [1.2.4. 关闭channel](#124-%E5%85%B3%E9%97%ADchannel)
-- [2. panic](#2-panic)
-	- [2.1. 数据结构](#21-%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84)
-	- [2.2. 崩溃](#22-%E5%B4%A9%E6%BA%83)
-	- [2.3. 恢复](#23-%E6%81%A2%E5%A4%8D)
-	- [2.4. 总结](#24-%E6%80%BB%E7%BB%93)
-
-<!-- /TOC -->
+<!-- TOC -->autoauto- [1. Channel](#1-channel)auto    - [1.1. channel实现原理](#11-channel实现原理)auto        - [1.1.1. chan数据结构](#111-chan数据结构)auto        - [1.1.2. 环形队列](#112-环形队列)auto        - [1.1.3. 等待队列](#113-等待队列)auto        - [1.1.4. 类型信息](#114-类型信息)auto        - [1.1.5. 锁](#115-锁)auto    - [1.2. chan读写](#12-chan读写)auto        - [1.2.1. 创建channel](#121-创建channel)auto        - [1.2.2. 向channel写数据](#122-向channel写数据)auto        - [1.2.3. 从channel读数据](#123-从channel读数据)auto        - [1.2.4. 关闭channel](#124-关闭channel)auto- [2. panic](#2-panic)auto    - [2.1. 数据结构](#21-数据结构)auto    - [2.2. 崩溃](#22-崩溃)auto    - [2.3. 恢复](#23-恢复)auto    - [2.4. 总结](#24-总结)autoauto<!-- /TOC -->
 
 # 1. Channel
 

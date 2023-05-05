@@ -1,9 +1,9 @@
 ---
 title: Go语言context包学习笔记
-date: "2019-05-16"
+date: 2019-05-16
 description: ""
 url: /blog/go/context/
-image: "/blog/go/context.png"
+thumbnail: /blog/go/context.png
 ---
 Go语言中的context是一个很常用的包，但想用好，也需要深入学习一下
 

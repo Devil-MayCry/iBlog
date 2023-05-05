@@ -1,8 +1,8 @@
 ---
 title: 《从Paxos到zookeeper分布式一致性原理与实践》学习笔记
-date: "2019-03-30"
+date: 2019-03-30
 description: ""
-image: "/blog/paxos_to_zookeeper/bitcoin.jpeg"
+thumbnail: /blog/paxos_to_zookeeper/bitcoin.jpeg
 ---
  阅读《从Paxos到zookeeper》的一些笔记记录.
  
