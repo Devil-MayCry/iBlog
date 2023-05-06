@@ -13,7 +13,7 @@ DefaultContentLanguageInSubdir = true
     languageName = "English"
     [languages.en.params]
       introTitle = "Hey!  I'm Enix"
-      introSubtitle = "30 y/o Developer who enjoys Reading, Video Games, Beethoven :）"
+      introSubtitle = "29 y/o Developer who enjoys Reading, Video Games, Classical Music :）"
       introPhoto = "/enix.png"
       logo = "/blist-logo.png"
     [[languages.en.menu.main]]
@@ -108,16 +108,16 @@ DefaultContentLanguageInSubdir = true
 [params.homepage.social]
   # Global params common for both languages
   title = "Follow me"
-  description = "I work on everything coding and tweet developer memes"
+  description = ""
   [[params.homepage.social.icons]]
-    website = "twitter"
-    url = "https://twitter.com/"
+    website = "stackoverflow"
+    url = "https://www.zhihu.com/people/darkdante-hu"
   [[params.homepage.social.icons]]
     website = "linkedin"
-    url = "https://linkedin.com/in/"
+    url = "https://www.linkedin.com/in/%E8%85%BE-%E8%83%A1-30583b153/"
   [[params.homepage.social.icons]]
     website = "github"
-    url = "https://github.com/"
+    url = "https://github.com/Devil-MayCry"
 
 [[menu.main]]
   name = "About"
